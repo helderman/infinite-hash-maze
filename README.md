@@ -45,4 +45,4 @@ But that was already more than enough;
 the whole game was set in a relatively tiny part of the maze.
 
 Go here to browse through the entire maze:   
-https://helderman.github.io/infinite-hash-maze/html5/maze.html
+[https://helderman.github.io/infinite-hash-maze/html5/maze.html](https://helderman.github.io/infinite-hash-maze/html5/maze.html)
