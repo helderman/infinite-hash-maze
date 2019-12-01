@@ -133,17 +133,19 @@ function floodFill() {
 	}
 	for (let count = 0; count < fillBatchSize; count++) {
 		let cell = fillQueue.shift();
-		if (!wallNorthOf(cell.x, cell.y)) {
-			addToFill(cell.x, cell.y+1);
-		}
-		if (!wallEastOf(cell.x, cell.y)) {
-			addToFill(cell.x+1, cell.y);
-		}
-		if (!wallSouthOf(cell.x, cell.y)) {
-			addToFill(cell.x, cell.y-1);
-		}
-		if (!wallWestOf(cell.x, cell.y)) {
-			addToFill(cell.x-1, cell.y);
+		if (cell) {
+			if (!wallNorthOf(cell.x, cell.y)) {
+				addToFill(cell.x, cell.y+1);
+			}
+			if (!wallEastOf(cell.x, cell.y)) {
+				addToFill(cell.x+1, cell.y);
+			}
+			if (!wallSouthOf(cell.x, cell.y)) {
+				addToFill(cell.x, cell.y-1);
+			}
+			if (!wallWestOf(cell.x, cell.y)) {
+				addToFill(cell.x-1, cell.y);
+			}
 		}
 	}
 }
