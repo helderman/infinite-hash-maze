@@ -36,7 +36,7 @@ So I define two hash functions, with distinct parameters `a` and `b`:
 - `parity(563*x + 761*y)` for the border between cells (x, y-1) and (x, y)
 - `parity(1409*x + 397*y)` for the border between cells (x-1, y) and (x, y)
 
-I have used this maze as the basic for my game
+I have used this maze as the basis for my game
 [The Search for Dumbledore](https://scratch.mit.edu/projects/224252447/).
 There, the hash function was slightly restricted;
 the parity function only looked at the 16 least significant bits,

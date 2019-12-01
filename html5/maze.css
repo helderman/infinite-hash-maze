@@ -4,3 +4,20 @@ html, body {
 	margin: 0;
 	overflow: hidden;
 }
+
+.dialog {
+	position: absolute;
+	background: white;
+	border: thin solid black;
+	padding: 10px;
+}
+
+#help {
+	left: 10px;
+	top: 10px;
+}
+
+#info {
+	right: 10px;
+	top: 10px;
+}

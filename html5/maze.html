@@ -6,6 +6,19 @@
 </head>
 <body>
 <canvas id="canvas" width="480" height="360"></canvas>
+<div id="help" class="dialog" style="display:block">
+<div><b>Infinite Hash Maze</b></div>
+<div>arrow keys = move</div>
+<div>A/Z = zoom in/out</div>
+<div>F/C = floodfill, clear</div>
+<div>H/I = toggle help/info</div>
+</div>
+<div id="info" class="dialog" style="display:block">
+<div>Center position: (<span id="info_center"></span>)</div>
+<div>Visible cells: <span id="info_cells"></span></div>
+<div>Hashes per frame: <span id="info_hashes"></span></div>
+<div>FPS: <span id="info_fps"></span></div>
+</div>
 <script type="text/javascript" src="maze.js"></script>
 </body>
 </html>

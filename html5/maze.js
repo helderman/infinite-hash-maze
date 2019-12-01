@@ -11,7 +11,7 @@ let currentY = 35273;
 let step = 1;
 let boxSize = 16;
 
-const fillBatchSize = 2000;
+const fillBatchSize = 10000;
 let fillIndex, fillQueue;
 initFill();
 
@@ -21,15 +21,19 @@ window.onkeydown = function(e) {
 		case 38: currentY += step; break;	// up
 		case 39: currentX += step; break;	// right
 		case 40: currentY -= step; break;	// down
-		case 65: boxSize *= 1.25; break;	// A = zoom in
-		case 90: boxSize /= 1.25; break;	// Z = zoom out
+		case 65: boxSize *= 1.125; break;	// A = zoom in
+		case 90: boxSize /= 1.125; break;	// Z = zoom out
 		case 67: initFill(); break;		// C = clear flood fill
 		case 70: floodFill(); break;		// F = flood fill
+		case 72: toggleDialog('help'); break;	// H = help
+		case 73: toggleDialog('info'); break;	// I = info
 	}
 	step = 16 / boxSize;
 };
 
-(function loop() {
+let lastTime = 0;
+
+(function loop(time) {
 	requestAnimationFrame(loop);
 
 	const wallThickness = boxSize * 0.25;
@@ -74,7 +78,13 @@ window.onkeydown = function(e) {
 			}
 		}
 	}
-})();
+	const duration = time - lastTime;
+	setInfo('center', Math.floor(currentX) + ', ' + Math.floor(currentY));
+	setInfo('cells', (toX - fromX) + ' x ' + (toY - fromY));
+	setInfo('hashes', (toX - fromX) * (toY - fromY) * 2);
+	setInfo('fps', duration ? (1000 / duration).toFixed(2) : '');
+	lastTime = time;
+})(lastTime);
 
 function wallSouthOf(x, y) {
 	return parity(563 * x + 761 * y);
@@ -106,8 +116,9 @@ function initFill() {
 }
 
 function floodFill() {
-	if (fillQueue.length == 0) {
-		addToFill(currentX, currentY);
+	if (!('any' in fillIndex)) {
+		addToFill(Math.floor(currentX), Math.floor(currentY));
+		fillIndex['any'] = 0;
 	}
 	for (let count = 0; count < fillBatchSize; count++) {
 		let cell = fillQueue.shift();
@@ -132,4 +143,13 @@ function addToFill(x, y) {
 		fillIndex[key] = 0;
 		fillQueue.push({x:x, y:y});
 	}
+}
+
+function toggleDialog(id) {
+	let style = document.getElementById(id).style;
+	style.display = style.display == 'none' ? 'block' : 'none';
+}
+
+function setInfo(id, text) {
+	document.getElementById('info_' + id).innerText = text;
 }
