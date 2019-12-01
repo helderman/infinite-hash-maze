@@ -10,9 +10,10 @@ let currentX = 33322;
 let currentY = 35273;
 let step = 1;
 let boxSize = 16;
+let walls = true;
 
 const fillBatchSize = 10000;
-let fillIndex, fillQueue;
+let fillCount, fillIndex, fillQueue;
 initFill();
 
 window.onkeydown = function(e) {
@@ -25,8 +26,9 @@ window.onkeydown = function(e) {
 		case 90: boxSize /= 1.125; break;	// Z = zoom out
 		case 67: initFill(); break;		// C = clear flood fill
 		case 70: floodFill(); break;		// F = flood fill
-		case 72: toggleDialog('help'); break;	// H = help
-		case 73: toggleDialog('info'); break;	// I = info
+		case 87: walls = !walls; break;		// W = toggle walls
+		case 72: toggleDialog('help'); break;	// H = toggle help
+		case 73: toggleDialog('info'); break;	// I = toggle info
 	}
 	step = 16 / boxSize;
 };
@@ -49,39 +51,48 @@ let lastTime = 0;
 
 	ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-	ctx.lineCap = 'round';
+	ctx.lineWidth = fillThickness;
+	ctx.strokeStyle = 'green';
+	ctx.lineCap = 'square';
+	ctx.beginPath();
 	for (let cellY = fromY, y = startY; cellY < toY; cellY++, y -= boxSize) {
-		for (let cellX = fromX, x = startX; cellX < toX; cellX++, x += boxSize) {
-			if (cellX + "," + cellY in fillIndex) {
-				ctx.beginPath();
-				ctx.lineWidth = fillThickness;
-				ctx.strokeStyle = 'green';
-				ctx.moveTo(x + boxSize/2, y - boxSize/2);
-				ctx.lineTo(x + boxSize/2, y - boxSize/2);
-				ctx.stroke();
-			}
-			if (wallSouthOf(cellX, cellY)) {
-				ctx.beginPath();
-				ctx.lineWidth = wallThickness;
-				ctx.strokeStyle = 'black';
-				ctx.moveTo(x, y);
-				ctx.lineTo(x + boxSize, y);
-				ctx.stroke();
-			}
-			if (wallWestOf(cellX, cellY)) {
-				ctx.beginPath();
-				ctx.lineWidth = wallThickness;
-				ctx.strokeStyle = 'black';
-				ctx.moveTo(x, y);
-				ctx.lineTo(x, y - boxSize);
-				ctx.stroke();
+		const rowFillIndex = fillIndex[cellY];
+		if (rowFillIndex) {
+			for (let cellX = fromX, x = startX; cellX < toX; cellX++, x += boxSize) {
+				if (cellX in rowFillIndex) {
+					ctx.moveTo(x + boxSize/2, y - boxSize/2);
+					ctx.lineTo(x + boxSize/2, y - boxSize/2);
+				}
 			}
 		}
 	}
+	ctx.stroke();
+
+	if (walls) {
+		ctx.lineWidth = wallThickness;
+		ctx.strokeStyle = 'black';
+		ctx.lineCap = 'round';
+		ctx.beginPath();
+		for (let cellY = fromY, y = startY; cellY < toY; cellY++, y -= boxSize) {
+			for (let cellX = fromX, x = startX; cellX < toX; cellX++, x += boxSize) {
+				if (wallSouthOf(cellX, cellY)) {
+					ctx.moveTo(x, y);
+					ctx.lineTo(x + boxSize, y);
+				}
+				if (wallWestOf(cellX, cellY)) {
+					ctx.moveTo(x, y);
+					ctx.lineTo(x, y - boxSize);
+				}
+			}
+		}
+		ctx.stroke();
+	}
+
 	const duration = time - lastTime;
 	setInfo('center', Math.floor(currentX) + ', ' + Math.floor(currentY));
 	setInfo('cells', (toX - fromX) + ' x ' + (toY - fromY));
 	setInfo('hashes', (toX - fromX) * (toY - fromY) * 2);
+	setInfo('filled', fillCount);
 	setInfo('fps', duration ? (1000 / duration).toFixed(2) : '');
 	lastTime = time;
 })(lastTime);
@@ -111,14 +122,14 @@ function parity(n) {
 }
 
 function initFill() {
+	fillCount = 0;
 	fillIndex = {};
 	fillQueue = [];
 }
 
 function floodFill() {
-	if (!('any' in fillIndex)) {
+	if (fillCount == 0) {
 		addToFill(Math.floor(currentX), Math.floor(currentY));
-		fillIndex['any'] = 0;
 	}
 	for (let count = 0; count < fillBatchSize; count++) {
 		let cell = fillQueue.shift();
@@ -138,9 +149,12 @@ function floodFill() {
 }
 
 function addToFill(x, y) {
-	const key = x + "," + y;
-	if (!(key in fillIndex)) {
-		fillIndex[key] = 0;
+	if (!(y in fillIndex)) {
+		fillIndex[y] = {};
+	}
+	if (!(x in fillIndex[y])) {
+		fillCount++;
+		fillIndex[y][x] = 0;
 		fillQueue.push({x:x, y:y});
 	}
 }
