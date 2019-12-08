@@ -1,0 +1,401 @@
+; ---------------------------------
+; Infinite Hash Maze
+; ---------------------------------
+
+; MZ-700 system calls (monitor 1Z-013A)
+BLNK:	EQU	0DA6H	; wait until start of vertical retrace
+DPCT:	EQU	0DDCH	; display control
+
+CLS:	EQU	0C6H	; control code to clear screen
+
+; MZ-700 memory map
+VRAM:	EQU	0D000H	; video RAM: characters
+VRAMC:	EQU	0D800H	; video RAM: colors
+PPI:	EQU	0E000H	; keyboard matrix (PPI 8255)
+
+WIDTH:	EQU	40	; width of screen (number of chars)
+HEIGHT:	EQU	25	; height of screen (number of chars)
+
+; MZ-700 color codes
+CCWALL:	EQU	54H	; light blue on green
+CCNONE:	EQU	50H	; light blue on black
+
+; Hash steps for horizontal walls
+HLEFT:	EQU	-563
+HRIGHT:	EQU	563
+HDOWN:	EQU	-761
+HUP:	EQU	761
+
+; Hash steps for vertical walls
+VLEFT:	EQU	-1409
+VRIGHT:	EQU	1409
+VDOWN:	EQU	-397
+VUP:	EQU	397
+
+; ---------------------------------
+; Code
+; ---------------------------------
+
+	ORG	4000H
+
+; START - start game
+; Infinite loop; will never exit
+;
+START:	LD	A,CLS
+	CALL	DPCT
+	LD	IX,VRAM + 458
+	LD	(IX+41),0FEH
+	LD	(IX+42),0FDH
+	LD	(IX+81),0FBH
+	LD	(IX+82),0F7H
+FRAME:	CALL	BLNK
+	LD	DE,VRAMC
+	LD	HL,RCOUNT
+	LD	(HL),25	; number of rows on screen
+	LD	HL,(HCURR)
+	LD	(HSCAN),HL
+	LD	HL,(VCURR)
+	LD	(VSCAN),HL
+	LD	HL,(YCURR)
+	LD	BC,ROWS
+	ADD	HL,BC
+LOOP:	PUSH	HL
+	XOR	A
+	OR	(HL)	; A := (HL) with ZF affected
+	JR	Z,VROW
+	LD	HL,(HSCAN)
+	LD	BC,HDOWN
+	ADD	HL,BC
+	LD	(HSCAN),HL
+	LD	HL,(VSCAN)
+	LD	BC,VDOWN
+	ADD	HL,BC
+	LD	(VSCAN),HL
+VROW:	LD	HL,(XCURR)
+	ADD	A,L
+	LD	L,A
+	LD	BC,VCMD
+	ADD	HL,BC
+	LD	(FPTR),HL
+	LD	HL,FCOUNT
+	LD	(HL),40	; number of commands per row
+	CALL	DRAW	; draw a single row
+	LD	HL,(HSCAN)
+	LD	BC,8*HLEFT
+	ADD	HL,BC
+	LD	(HSCAN),HL
+	LD	HL,(VSCAN)
+	LD	BC,8*VLEFT
+	ADD	HL,BC
+	LD	(VSCAN),HL
+	LD	HL,RCOUNT
+	DEC	(HL)
+	POP	HL
+	INC	HL
+	JR	NZ,LOOP	; until (RCOUNT) = 0
+	LD	HL,PPI
+	DI
+	LD	(HL),0F7H
+	INC	HL
+	LD	E,CCNONE
+	LD	D,(HL)	; A := xxUDRLxx (binary)
+	EI
+	LD	IX,VRAMC + 458
+	LD	HL,XCURR
+	BIT	2,D
+	JR	NZ,KEYS1
+	LD	A,(IX+40)
+	OR	(IX+80)
+	CP	E
+	JR	NZ,KEYS1
+	DEC	(HL)	; left
+	DEC	IX
+KEYS1:	BIT	3,D
+	JR	NZ,KEYS2
+	LD	A,(IX+43)
+	OR	(IX+83)
+	CP	E
+	JR	NZ,KEYS2
+	INC	(HL)	; right
+	INC	IX
+KEYS2:	INC	HL
+	INC	HL	; HL := YCURR
+	BIT	4,D
+	JR	NZ,KEYS3
+	LD	A,(IX+121)
+	OR	(IX+122)
+	CP	E
+	JR	NZ,KEYS3
+	INC	(HL)	; down
+KEYS3:	BIT	5,D
+	JR	NZ,KEYS4
+	LD	A,(IX+1)
+	OR	(IX+2)
+	CP	E
+	JR	NZ,KEYS4
+	DEC	(HL)	; up
+KEYS4:	LD	A,(HL)
+	SUB	5
+	JR	C,KEYS6
+	LD	BC,HDOWN
+	LD	DE,VDOWN
+	JR	Z,KEYS5
+	LD	BC,HUP
+	LD	DE,VUP
+	LD	A,4
+KEYS5:	LD	(HL),A
+	LD	HL,(HCURR)
+	ADD	HL,BC
+	LD	(HCURR),HL
+	LD	HL,(VCURR)
+	ADD	HL,DE
+	LD	(VCURR),HL
+KEYS6:	LD	HL,XCURR
+	LD	A,(HL)
+	SUB	5
+	JR	C,KEYS8
+	LD	BC,HRIGHT
+	LD	DE,VRIGHT
+	JR	Z,KEYS7
+	LD	BC,HLEFT
+	LD	DE,VLEFT
+	LD	A,4
+KEYS7:	LD	(HL),A
+	LD	HL,(HCURR)
+	ADD	HL,BC
+	LD	(HCURR),HL
+	LD	HL,(VCURR)
+	ADD	HL,DE
+	LD	(VCURR),HL
+KEYS8:	JP	FRAME
+
+; CWALL - draw corner
+; side effect: (HSCAN) += HRIGHT; (VSCAN) += VRIGHT
+; in:  DE = V-RAM address
+; out: DE = next V-RAM address
+;
+CWALL:	LD	HL,(VSCAN)
+	LD	BC,VRIGHT
+	ADD	HL,BC
+	LD	(VSCAN),HL
+	LD	HL,(HSCAN)
+	LD	A,L
+	XOR	H
+	LD	BC,HRIGHT
+	ADD	HL,BC
+	LD	(HSCAN),HL
+	JP	PO,PWALL
+	LD	A,L
+	XOR	H
+	JP	PO,PWALL
+	LD	HL,(VSCAN)
+	LD	A,L
+	XOR	H
+	JP	PO,PWALL
+	LD	BC,VUP
+	ADD	HL,BC
+	JR	HLWALL
+
+; HWALL - part of horizontal wall
+; VWALL - part of vertical wall
+; in:  DE = V-RAM address
+; out: DE = next V-RAM address
+;
+HWALL:	LD	HL,(HSCAN)
+	JR	HLWALL
+VWALL:	LD	HL,(HSCAN)
+	LD	BC,HRIGHT
+	ADD	HL,BC
+	LD	(HSCAN),HL
+	LD	HL,(VSCAN)
+	LD	BC,VRIGHT
+	ADD	HL,BC
+	LD	(VSCAN),HL
+	; fall through to HLWALL
+
+; HLWALL - set color of one char on screen, depending on hash (HL)
+; PWALL - set color of one char on screen, depending on parity flag
+; NOWALL - set color of one char on screen, no wall
+; AGAIN - set color of one char on screen, same as previous (A)
+; in:  DE = V-RAM address
+; out: DE = next V-RAM address
+;
+HLWALL:	LD	A,L
+	XOR	H
+PWALL:	LD	A,CCWALL
+	JP	PO,AGAIN
+NOWALL:	LD	A,CCNONE
+AGAIN:	LD	(DE),A	; write to V-RAM
+	INC	DE
+	LD	HL,FCOUNT
+	DEC	(HL)
+	RET	Z
+DRAW:	LD	HL,(FPTR)
+	LD	C,(HL)
+	LD	B,-1
+	INC	HL
+	LD	(FPTR),HL
+	LD	HL,DRAW
+	ADD	HL,BC
+	JP	(HL)
+
+; ---------------------------------
+; Fixed data
+; ---------------------------------
+
+; ROWS - row types, from top to bottom on screen
+; 0         = draw row using VCMD
+; HCMD-VCMD = draw row using HCMD
+;
+ROWS:	DEFB	0
+	DEFB	0
+	DEFB	0
+	DEFB	0
+	DEFB	HCMD-VCMD
+	DEFB	0
+	DEFB	0
+	DEFB	0
+	DEFB	0
+	DEFB	HCMD-VCMD
+	DEFB	0
+	DEFB	0
+	DEFB	0
+	DEFB	0
+	DEFB	HCMD-VCMD
+	DEFB	0
+	DEFB	0
+	DEFB	0
+	DEFB	0
+	DEFB	HCMD-VCMD
+	DEFB	0
+	DEFB	0
+	DEFB	0
+	DEFB	0
+	DEFB	HCMD-VCMD
+	DEFB	0
+	DEFB	0
+	DEFB	0
+	DEFB	0
+
+; VCMD - commands to draw a row crossing vertical walls
+; VWALL-DRAW = draw a piece of a vertical wall
+; NOWALL-DRAW = draw an empty spot
+; AGAIN-DRAW = draw the same thing as in the previous command
+;
+VCMD:	DEFB	NOWALL-DRAW
+	DEFB	NOWALL-DRAW
+	DEFB	NOWALL-DRAW
+	DEFB	NOWALL-DRAW
+	DEFB	VWALL-DRAW
+	DEFB	NOWALL-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	VWALL-DRAW
+	DEFB	NOWALL-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	VWALL-DRAW
+	DEFB	NOWALL-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	VWALL-DRAW
+	DEFB	NOWALL-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	VWALL-DRAW
+	DEFB	NOWALL-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	VWALL-DRAW
+	DEFB	NOWALL-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	VWALL-DRAW
+	DEFB	NOWALL-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	VWALL-DRAW
+	DEFB	NOWALL-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+
+; HCMD - commands to draw a row with horizontal walls
+; CWALL-DRAW = draw a corner stone
+; HWALL-DRAW = draw a piece of a horizontal wall
+; AGAIN-DRAW = draw the same thing as in the previous command
+;
+HCMD:	DEFB	HWALL-DRAW
+	DEFB	HWALL-DRAW
+	DEFB	HWALL-DRAW
+	DEFB	HWALL-DRAW
+	DEFB	CWALL-DRAW
+	DEFB	HWALL-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	CWALL-DRAW
+	DEFB	HWALL-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	CWALL-DRAW
+	DEFB	HWALL-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	CWALL-DRAW
+	DEFB	HWALL-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	CWALL-DRAW
+	DEFB	HWALL-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	CWALL-DRAW
+	DEFB	HWALL-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	CWALL-DRAW
+	DEFB	HWALL-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	CWALL-DRAW
+	DEFB	HWALL-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+
+; ---------------------------------
+; Initialized variables
+; ---------------------------------
+
+XCURR:	DEFW	2	; current X position detail (0-4)
+YCURR:	DEFW	4	; current Y position detail (0-4)
+
+HCURR:	DEFW	0DBF7H	; current position, hashed for horizontal walls
+VCURR:	DEFW	0482H	; current position, hashed for vertical walls
+
+; ---------------------------------
+; Uninitialized variables
+; ---------------------------------
+
+HSCAN:	DEFW	0	; hash of horizontal wall being painted
+VSCAN:	DEFW	0	; hash of vertical wall being painted
+
+FPTR:	DEFW	0	; points to next function
+FCOUNT:	DEFB	0	; count down functions on current row
+RCOUNT:	DEFB	0	; count down rows
+
+	END
