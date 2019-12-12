@@ -1,19 +1,22 @@
 #!/bin/bash
 
 # bin2mzt.sh - prepends a 128-byte tape header to a Z80 object file
-# (assumes start and execute address are 4000h)
-# Example: bin2mzt.sh foo.bin > foo.mzt
+# Usage: bin2mzt.sh <input file> <load address> <execute address>
+# Example: bin2mzt.sh foo.bin 0x4000 0x4000 > foo.mzt
 
-NAME=${1^^}
-NAME=${NAME%.BIN}
+function padding {
+	dd bs=$1 conv=sync,ucase status=none
+}
+function output_word {
+	printf '%04x' $1 | xxd -p -r | dd conv=swab status=none
+}
 
-echo -ne '\01'
-echo -n "$NAME"
-echo -ne '\x0D'
-printf '%*s' $((16 - ${#NAME}))
-printf '%04x' $(wc -c < "$1") | xxd -p -r | dd conv=swab status=none
-echo -ne '\0@\0@\0\0\0\0\0\0\0\0'
-echo -ne '\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0'
-echo -ne '\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0'
-echo -ne '\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0'
+NAME="$(basename "$1" .bin)"
+
+echo -n $'\1'"${NAME::16}"$'\r' | padding 18
+output_word $(wc -c < "$1")
+output_word "$2"
+output_word "$3"
+echo -ne '\0' | padding 104
+
 cat "$1"
