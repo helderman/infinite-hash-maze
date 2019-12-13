@@ -1,4 +1,4 @@
-all: maze.mzt
+all: mazegame.mzt
 
 %.mzt: %.bin
 	./bin2mzt.sh $< 0x4000 0x4000 > $@

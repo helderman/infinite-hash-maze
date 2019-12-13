@@ -62,6 +62,6 @@ It runs on a [Sharp MZ-700](https://commons.wikimedia.org/wiki/File:Sharp_MZ-700
 at a reasonable frame rate.
 It is unlikely you will own the real machine,
 so instead please drag and drop
-[maze.mzt](https://helderman.github.io/infinite-hash-maze/z80/maze.mzt)
-on this emulator:   
+[mazegame.mzt](https://helderman.github.io/infinite-hash-maze/z80/mazegame.mzt)
+onto this emulator:   
 [https://takamin.github.io/mz700-js/emu.html](https://takamin.github.io/mz700-js/emu.html)
