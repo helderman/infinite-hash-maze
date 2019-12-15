@@ -41,10 +41,10 @@ The parity function only looks at the 16 least significant bits,
 so the maze will repeat itself after 65,536 cells in either direction.
 For a game, that should be more than enough.
 (In real-life proportions, such a maze would already be the size of
-[Rhode Island](https://en.wikipedia.org/wiki/Rhode_Island)).
+[Rhode Island](https://en.wikipedia.org/wiki/Rhode_Island).)
 
 If you really want to, then you could use arbitrary-precision integers,
-but that also warrants bigger primes for `a`, `b`, `c` and `d`
+but that also warrants bigger primes `a`, `b`, `c` and `d`
 to prevent the maze from repeating itself.
 
 ## Scratch implementation
