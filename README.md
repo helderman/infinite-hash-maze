@@ -36,15 +36,24 @@ So I define two hash functions, with distinct parameters `a` and `b`:
 - `parity(563*x + 761*y)` for the border between cells (x, y-1) and (x, y)
 - `parity(1409*x + 397*y)` for the border between cells (x-1, y) and (x, y)
 
+In the implementations listed below, I limited the hash function.
+The parity function only looks at the 16 least significant bits,
+so the maze will repeat itself after 65,536 cells in either direction.
+For a game, that should be more than enough.
+(In real-life proportions, such a maze would already be the size of
+[Rhode Island](https://en.wikipedia.org/wiki/Rhode_Island)).
+
+If you really want to, then you could use arbitrary-precision integers,
+but that also warrants bigger primes for `a`, `b`, `c` and `d`
+to prevent the maze from repeating itself.
+
 ## Scratch implementation
 
 I have used this maze as the basis for my game
 [The Search for Dumbledore](https://scratch.mit.edu/projects/224252447/).
-There, the hash function was slightly restricted;
-the parity function only looked at the 16 least significant bits,
-so the maze would repeat itself after 65,536 cells in either direction.
-But that was already more than enough;
-the whole game was set in a relatively tiny part of the maze.
+
+It's an adventure that takes place in a relatively small part of the maze,
+but the game _does_ give you the freedom to roam around as far as you like.
 
 ## JavaScript implementation
 
@@ -63,5 +72,7 @@ at a reasonable frame rate.
 It is unlikely you will own the real machine,
 so instead please drag and drop
 [mazegame.mzt](https://helderman.github.io/infinite-hash-maze/z80/mazegame.mzt)
+or
+[mazeview.mzt](https://helderman.github.io/infinite-hash-maze/z80/mazeview.mzt)
 onto this emulator:   
 [https://takamin.github.io/mz700-js/emu.html](https://takamin.github.io/mz700-js/emu.html)

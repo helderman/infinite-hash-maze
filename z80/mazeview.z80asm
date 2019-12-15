@@ -1,0 +1,145 @@
+; ---------------------------------
+; Infinite Hash Maze (Sharp MZ-700)
+; ---------------------------------
+;
+; Simple top-down view of the hash maze.
+; Use arrow keys to freely scroll in 8 directions.
+;
+; Assembles to 149 bytes of object code.
+; Zero memory footprint - really!
+; The program uses no variables and no stack (!);
+; everything is stored in registers.
+; (Of course, video RAM is still needed to display anything on screen.)
+;
+; Character codes used:
+; 00H = blank
+; 70H = horizontal line at top of character box
+; 71H = vertical line to left of character box
+; 72H = both lines
+
+; MZ-700 memory map: video RAM
+VRAM:	EQU	0D000H	; video RAM address (character codes)
+COLS:	EQU	40	; screen width (number of columns)
+ROWS:	EQU	25	; screen height (number of rows)
+BOX:	EQU	6FH	; display code offset for box characters
+
+; MZ-700 memory map: memory-mapped I/O
+PPI:	EQU	0E000H	; PPI 8255
+ARROWS:	EQU	0F7H	; PPI port A output for keyboard scanline #8
+
+; Hash steps for horizontal walls
+HLEFT:	EQU	-563
+HRIGHT:	EQU	563
+HDOWN:	EQU	-761
+HUP:	EQU	761
+
+; Hash steps for vertical walls
+VLEFT:	EQU	-1409
+VRIGHT:	EQU	1409
+VDOWN:	EQU	-397
+VUP:	EQU	397
+
+; ---------------------------------
+; Code
+; ---------------------------------
+
+	ORG	4000H
+
+START:	LD	HL,8937H	; bottom left of screen, hashed for horizontal walls
+	EXX
+	LD	HL,93A2H	; bottom left of screen, hashed for vertical walls
+
+FRAME:	LD	A,ARROWS
+	LD	BC,PPI	; port A
+	DI
+	LD	(BC),A
+	LD	DE,ROWS*VUP	; go to top left of screen
+	ADD	HL,DE
+	EXX
+	LD	DE,ROWS*HUP	; go to top left of screen
+	ADD	HL,DE
+	EXX
+	INC	C	; BC := PPI+1 (port B)
+	LD	A,(BC)	; A := xxUDRLxx (binary)
+	EI
+	RRCA
+	RRCA
+	RRCA		; CF := left arrow key (0 = pressed)
+	JR	C,KEYS1
+	LD	DE,VLEFT
+	ADD	HL,DE
+	EXX
+	LD	DE,HLEFT
+	ADD	HL,DE
+	EXX
+KEYS1:	RRCA		; CF := right arrow key (0 = pressed)
+	JR	C,KEYS2
+	LD	DE,VRIGHT
+	ADD	HL,DE
+	EXX
+	LD	DE,HRIGHT
+	ADD	HL,DE
+	EXX
+KEYS2:	RRCA		; CF := down arrow key (0 = pressed)
+	JR	C,KEYS3
+	LD	DE,VDOWN
+	ADD	HL,DE
+	EXX
+	LD	DE,HDOWN
+	ADD	HL,DE
+	EXX
+KEYS3:	RRCA		; CF := up arrow key (0 = pressed)
+	JR	C,KEYS4
+	LD	DE,VUP
+	ADD	HL,DE
+	EXX
+	LD	DE,HUP
+	ADD	HL,DE
+	EXX
+KEYS4:	INC	C	; BC := PPI+2 (port C)
+SYNC1:	LD	A,(BC)
+	RLCA		; CF := port C bit 7
+	JR	NC,SYNC1
+SYNC2:	LD	A,(BC)
+	RLCA		; CF := port C bit 7
+	JR	C,SYNC2	; wait until start of vertical retrace
+
+	LD	BC,VRAM	; start at top left of screen
+LOOP1:	LD	DE,VRIGHT
+	EXX
+	LD	DE,HRIGHT
+	LD	B,COLS
+LOOP2:	EXX
+	LD	A,L
+	XOR	H
+	ADD	HL,DE
+	EXX
+	LD	C,0
+	JP	PE,WALL1
+	INC	C	; vertical wall
+WALL1:	LD	A,L
+	XOR	H
+	ADD	HL,DE
+	LD	A,C
+	JP	PE,WALL2
+	SCF		; horizontal wall
+WALL2:	ADC	A,A
+	JR	Z,WALL3
+	ADD	A,BOX
+WALL3:	EXX
+	LD	(BC),A	; write to video RAM
+	INC	BC	; next character position
+	EXX
+	DJNZ	LOOP2
+	LD	DE,HDOWN-COLS*HRIGHT	; start of next row
+	ADD	HL,DE
+	EXX
+	LD	DE,VDOWN-COLS*VRIGHT	; start of next row
+	ADD	HL,DE
+	LD	A,C
+	CP	0E8H
+	JR	NZ,LOOP1	; loop until BC = 1000 = 03E8H
+
+	JP	FRAME
+
+	END
