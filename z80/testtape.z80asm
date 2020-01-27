@@ -1,0 +1,22 @@
+; testtape.z80asm - MZ-700 program to test tape interface
+; To display object code (for typing over into MZ-700):
+; z80asm -o - -l testtape.z80asm | od -Ax -tx1 -w8
+; The object code is relocatable; put it wherever you like.
+
+START:	LD	HL,0D800H+999	; bottom right of screen
+LOOP:	LD	(HL),2		; background red
+	LD	A,(0E002H)	; bit 5 = tape read
+	RLCA
+	RLCA
+	RLCA			; CF = tape read
+	SBC	A,A		; 00h = low, FFh = high
+	AND	06H
+	OR	30H
+	LD	(0E007H),A	; 8253 counter 0 mode 0 or 3
+	LD	(HL),A		; background black or yellow
+	DEC	HL
+	BIT	3,H		; HL < 0D800H?
+	JR	NZ,LOOP
+	JR	START
+
+	END
