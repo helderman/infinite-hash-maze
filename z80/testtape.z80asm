@@ -3,7 +3,8 @@
 ; z80asm -o - -l testtape.z80asm | od -Ax -tx1 -w8
 ; The object code is relocatable; put it wherever you like.
 
-START:	LD	HL,0D800H+999	; bottom right of screen
+START:	CALL	069FH		; motor on (1Z-013A)
+	LD	HL,0D800H+999	; bottom right of screen
 LOOP:	LD	(HL),2		; background red
 	LD	A,(0E002H)	; bit 5 = tape read
 	RLCA
@@ -20,3 +21,14 @@ LOOP:	LD	(HL),2		; background red
 	JR	START
 
 	END
+
+; **  MONITOR 1Z-013A  **
+; *M1200
+; (enter the 30 bytes listed below, one at a time)
+; (Shift-Break)
+; *D1200121E
+; 1200 CD 9F 06 21 E7 DB 36 02
+; 1208 3A 02 E0 07 07 07 9F E6
+; 1210 06 F6 30 32 07 E0 77 2B
+; 1218 CB 5C 20 EA 18 E2
+; *J1200
