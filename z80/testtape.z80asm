@@ -2,6 +2,10 @@
 ; To display object code (for typing over into MZ-700):
 ; z80asm -o - -l testtape.z80asm | od -Ax -tx1 -w8
 ; The object code is relocatable; put it wherever you like.
+; To generate some test audio:
+; sox -b8 -c1 -r8k -n test.wav synth 10 0 0 50 square 200 vol 1 dcshift 0
+; where 50 = duty cycle (percentage; change to determine polarity).
+; Volume [0,1] and dcshift [-1,1]: to determine threshold and sensitivity.
 
 START:	CALL	069FH		; motor on (1Z-013A)
 	LD	HL,0D800H+999	; bottom right of screen
