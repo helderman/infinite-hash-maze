@@ -8,8 +8,8 @@
 ; Volume [0,1] and dcshift [-1,1]: to determine threshold and sensitivity.
 
 START:	CALL	069FH		; motor on (1Z-013A)
-	LD	HL,0D800H+999	; bottom right of screen
-LOOP:	LD	(HL),2		; background red
+FOREVR:	LD	HL,0D800H+999	; bottom right of screen
+FRAME:	LD	(HL),2		; background red
 	LD	A,(0E002H)	; bit 5 = tape read
 	RLCA
 	RLCA
@@ -21,8 +21,8 @@ LOOP:	LD	(HL),2		; background red
 	LD	(HL),A		; background black or yellow
 	DEC	HL
 	BIT	3,H		; HL < 0D800H?
-	JR	NZ,LOOP
-	JR	START
+	JR	NZ,FRAME	; next character position
+	JR	FOREVR		; next frame
 
 	END
 
@@ -34,5 +34,5 @@ LOOP:	LD	(HL),2		; background red
 ; 1200 CD 9F 06 21 E7 DB 36 02
 ; 1208 3A 02 E0 07 07 07 9F E6
 ; 1210 06 F6 30 32 07 E0 77 2B
-; 1218 CB 5C 20 EA 18 E2
+; 1218 CB 5C 20 EA 18 E5
 ; *J1200
