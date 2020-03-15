@@ -1,15 +1,18 @@
 #!/bin/bash
 
-# mzt2wav.sh - generates an audio file to be fed into MZ-700's tape interface
-# Experimental! Untested!!!
-# Needs sox (sudo apt install sox)
+# mzt2raw.sh - converts MZ-700 tape file to raw audio
+# Output: 8000 samples per second, 8 bits per sample (unsigned), 1 channel
 
-# Temporary files
+# Temporary file
 TMPBYTES=bytes.tmp
-TMPRAW=tmp.raw
+
+# SLUG=00 for traditional gaps (11 and 5.5 seconds)
+# SLUG=0 for shorter gaps (1.1 and 0.55 seconds)
+SLUG=$2
 
 # A single 8-bit sample in the WAV file, for a duration of 0.125 ms
-# Here you can tune volume, polarity...
+# (hexadecimal notation)
+# Here you can tune volume, polarity, D/C offset
 LOW=00
 HIGH=FF
 
@@ -24,7 +27,7 @@ function delay {
 
 # Long gap (introduces tape header)
 function gapLong {
-	printf "0%.0s" {1..22000}
+	eval printf "0%.0s" {1..220$SLUG}
 	printf "1%.0s" {1..40}
 	printf "0%.0s" {1..40}
 	echo 1
@@ -32,7 +35,7 @@ function gapLong {
 
 # Short gap (introduces data)
 function gapShort {
-	printf "0%.0s" {1..11000}
+	eval printf "0%.0s" {1..110$SLUG}
 	printf "1%.0s" {1..20}
 	printf "0%.0s" {1..20}
 	echo 1
@@ -76,9 +79,7 @@ function data2binary {
 	echo 1
 }
 
-delay > "$TMPRAW"
-header2binary "$1" | binary2bytes >> "$TMPRAW"
-delay >> "$TMPRAW"
-data2binary "$1" | binary2bytes >> "$TMPRAW"
-sox -r 8k -e unsigned -b 8 -c 1 "$TMPRAW" "$2"
-rm "$TMPRAW"
+delay
+header2binary "$1" | binary2bytes
+delay
+data2binary "$1" | binary2bytes

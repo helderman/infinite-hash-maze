@@ -3,15 +3,14 @@
 ; ---------------------------------
 
 ; MZ-700 system calls (monitor 1Z-013A)
-BLNK:	EQU	0DA6H	; wait until start of vertical retrace
 DPCT:	EQU	0DDCH	; display control
-
 CLS:	EQU	0C6H	; control code to clear screen
 
 ; MZ-700 memory map
 VRAM:	EQU	0D000H	; video RAM: characters
 VRAMC:	EQU	0D800H	; video RAM: colors
-PPI:	EQU	0E000H	; keyboard matrix (PPI 8255)
+PPI:	EQU	0E000H	; keyboard, VBLNK (PPI 8255)
+LS367:	EQU	0E008H	; HBLNK (LS367)
 
 ; MZ-700 color codes
 CCWALL:	EQU	54H	; light blue on green
@@ -45,10 +44,19 @@ START:	LD	A,CLS
 	LD	(IX+42),0FDH
 	LD	(IX+81),0FBH
 	LD	(IX+82),0F7H
-FRAME:	CALL	BLNK
+FRAME:	LD	B,8		; give CRT a head start of 7 scan lines
+	LD	DE,PPI+2	; DE := E002h (VBLNK)
+SYNC1:	LD	A,(DE)
+	RLCA
+	JR	C,SYNC1		; wait until we are in blanking period
+SYNC2:	LD	A,(DE)
+	RLCA
+	JR	NC,SYNC2	; wait until we leave blanking period
+	LD	E,LS367		; DE := E008h (HBLNK)
+	DJNZ	SYNC1
 	LD	DE,VRAMC
 	LD	HL,RCOUNT
-	LD	(HL),25	; number of rows on screen
+	LD	(HL),25		; number of character rows on screen
 	LD	HL,(HCURR)
 	LD	(HSCAN),HL
 	LD	HL,(VCURR)
@@ -58,7 +66,7 @@ FRAME:	CALL	BLNK
 	ADD	HL,BC
 LOOP:	PUSH	HL
 	XOR	A
-	OR	(HL)	; A := (HL) with ZF affected
+	OR	(HL)		; A := (HL) with ZF affected
 	JR	Z,VROW
 	LD	HL,(HSCAN)
 	LD	BC,HDOWN
@@ -75,8 +83,8 @@ VROW:	LD	HL,(XCURR)
 	ADD	HL,BC
 	LD	(FPTR),HL
 	LD	HL,FCOUNT
-	LD	(HL),12	; number of commands per row
-	CALL	DRAW	; draw a single row
+	LD	(HL),12		; number of commands per row
+	CALL	DRAW		; draw a single row
 	LD	HL,(HSCAN)
 	LD	BC,8*HLEFT
 	ADD	HL,BC
@@ -89,13 +97,13 @@ VROW:	LD	HL,(XCURR)
 	DEC	(HL)
 	POP	HL
 	INC	HL
-	JR	NZ,LOOP	; until (RCOUNT) = 0
+	JR	NZ,LOOP		; until (RCOUNT) = 0
 	LD	HL,PPI
 	DI
 	LD	(HL),0F7H
 	INC	HL
 	LD	E,CCNONE
-	LD	D,(HL)	; A := xxUDRLxx (binary)
+	LD	D,(HL)		; A := xxUDRLxx (binary)
 	EI
 	LD	IX,VRAMC + 458
 	LD	HL,XCURR
@@ -105,7 +113,7 @@ VROW:	LD	HL,(XCURR)
 	OR	(IX+80)
 	CP	E
 	JR	NZ,KEYS1
-	DEC	(HL)	; left
+	DEC	(HL)		; left
 	DEC	IX
 KEYS1:	BIT	3,D
 	JR	NZ,KEYS2
@@ -113,24 +121,24 @@ KEYS1:	BIT	3,D
 	OR	(IX+83)
 	CP	E
 	JR	NZ,KEYS2
-	INC	(HL)	; right
+	INC	(HL)		; right
 	INC	IX
 KEYS2:	INC	HL
-	INC	HL	; HL := YCURR
+	INC	HL		; HL := YCURR
 	BIT	4,D
 	JR	NZ,KEYS3
 	LD	A,(IX+121)
 	OR	(IX+122)
 	CP	E
 	JR	NZ,KEYS3
-	INC	(HL)	; down
+	INC	(HL)		; down
 KEYS3:	BIT	5,D
 	JR	NZ,KEYS4
 	LD	A,(IX+1)
 	OR	(IX+2)
 	CP	E
 	JR	NZ,KEYS4
-	DEC	(HL)	; up
+	DEC	(HL)		; up
 KEYS4:	LD	A,(HL)
 	SUB	5
 	JR	C,KEYS6
@@ -178,7 +186,7 @@ HCWALL:	LD	HL,(HSCAN)
 	LD	A,CCWALL
 	JP	PO,HCWAL1
 	LD	A,CCNONE
-HCWAL1:	LD	(DE),A
+HCWAL1:	LD	(DE),A		; write to V-RAM
 	INC	DE
 	LD	(DE),A
 	INC	DE
@@ -247,7 +255,7 @@ HLWALL:	LD	A,L
 PWALL:	LD	A,CCWALL
 	JP	PO,AGAIN
 NOWALL:	LD	A,CCNONE
-AGAIN:	LD	(DE),A	; write to V-RAM
+AGAIN:	LD	(DE),A		; write to V-RAM
 	INC	DE
 	LD	HL,FCOUNT
 	DEC	(HL)

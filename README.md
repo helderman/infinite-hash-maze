@@ -67,8 +67,15 @@ Note: zoom out too far and your web browser may break under the strain.
 To demonstrate just how simple and cheap the algorithm really is,
 I implemented the maze in Z80 assembly.
 The resulting program needs less than 1 KB of memory (code + data + stack).
-It runs on a [Sharp MZ-700](https://commons.wikimedia.org/wiki/File:Sharp_MZ-700.jpg)
-at a reasonable frame rate.
+
+It runs on a
+[Sharp MZ-700](https://commons.wikimedia.org/wiki/File:Sharp_MZ-700.jpg)
+at a reasonable frame rate. Just feed
+[mazegame.wav](https://helderman.github.io/infinite-hash-maze/z80/mazegame.wav)
+or
+[mazeview.wav](https://helderman.github.io/infinite-hash-maze/z80/mazeview.wav)
+into the computer's tape interface.
+
 It is unlikely you will own the real machine,
 so instead please drag and drop
 [mazegame.mzt](https://helderman.github.io/infinite-hash-maze/z80/mazegame.mzt)

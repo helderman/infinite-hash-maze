@@ -1,11 +1,10 @@
-all: mazegame.mzt mazeview.mzt
+all: mazegame.wav mazeview.wav testtape.wav
 
-# MP3 may be too lossy - needs investigation...
-%.mp3: %.mzt
-	./mzt2wav.sh $< $@
+%.wav: %.raw
+	./raw2wav.sh $< $@
 
-%.wav: %.mzt
-	./mzt2wav.sh $< $@
+%.raw: %.mzt
+	./mzt2wav.sh $< 0 > $@
 
 %.mzt: %.bin
 	./bin2mzt.sh $< 0x4000 0x4000 > $@
