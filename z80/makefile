@@ -4,7 +4,7 @@ all: mazegame.wav mazeview.wav testtape.wav
 	./raw2wav.sh $< $@
 
 %.raw: %.mzt
-	./mzt2wav.sh $< 0 > $@
+	./mzt2raw.sh $< 0 > $@
 
 %.mzt: %.bin
 	./bin2mzt.sh $< 0x4000 0x4000 > $@
