@@ -7,6 +7,8 @@
 ; where 50 = duty cycle (percentage; change to determine polarity).
 ; Volume [0,1] and dcshift [-1,1]: to determine threshold and sensitivity.
 
+	ORG	1200H
+
 START:	CALL	069FH		; motor on (1Z-013A)
 FOREVR:	LD	HL,0D800H+999	; bottom right of screen
 FRAME:	LD	(HL),2		; background red
