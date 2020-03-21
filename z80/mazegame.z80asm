@@ -2,10 +2,6 @@
 ; Infinite Hash Maze
 ; ---------------------------------
 
-; MZ-700 system calls (monitor 1Z-013A)
-DPCT:	EQU	0DDCH	; display control
-CLS:	EQU	0C6H	; control code to clear screen
-
 ; MZ-700 memory map
 VRAM:	EQU	0D000H	; video RAM: characters
 VRAMC:	EQU	0D800H	; video RAM: colors
@@ -37,8 +33,15 @@ VUP:	EQU	397
 ; START - start game
 ; Infinite loop; will never exit
 ;
-START:	LD	A,CLS
-	CALL	DPCT
+START:	LD	HL,VRAM
+	LD	DE,VRAM+1
+	LD	(HL),0
+	LD	BC,1999
+	PUSH	BC
+	LDIR
+	POP	BC
+	LD	(HL),CCNONE
+	LDIR
 	LD	IX,VRAM + 458
 	LD	(IX+41),0FEH
 	LD	(IX+42),0FDH
@@ -65,9 +68,9 @@ SYNC2:	LD	A,(DE)
 	LD	BC,ROWS
 	ADD	HL,BC
 LOOP:	PUSH	HL
-	XOR	A
-	OR	(HL)		; A := (HL) with ZF affected
-	JR	Z,VROW
+	LD	A,(HL)
+	OR	A
+	JR	NZ,VROW
 	LD	HL,(HSCAN)
 	LD	BC,HDOWN
 	ADD	HL,BC
@@ -79,7 +82,7 @@ LOOP:	PUSH	HL
 VROW:	LD	HL,(XCURR)
 	ADD	A,L
 	LD	L,A
-	LD	BC,VCMD
+	LD	BC,HCMD
 	ADD	HL,BC
 	LD	(FPTR),HL
 	LD	HL,FCOUNT
@@ -218,6 +221,7 @@ CWALL:	LD	HL,(VSCAN)
 
 ; HWALL - part of horizontal wall
 ; NVWALL - blanks + part of vertical wall
+; SVWALL - blanks/skips + part of vertical wall
 ; VWALL - part of vertical wall
 ; in:  DE = V-RAM address
 ; out: DE = next V-RAM address
@@ -230,7 +234,12 @@ NVWALL:	LD	A,CCNONE
 	LD	(DE),A
 	INC	DE
 	LD	(DE),A
+	JR	IVWALL
+SVWALL:	LD	A,CCNONE
+	LD	(DE),A
 	INC	DE
+	INC	DE
+IVWALL:	INC	DE
 	LD	(DE),A
 	INC	DE
 VWALL:	LD	HL,(HSCAN)
@@ -247,6 +256,7 @@ VWALL:	LD	HL,(HSCAN)
 ; PWALL - set color of one char on screen, depending on parity flag
 ; NOWALL - set color of one char on screen, no wall
 ; AGAIN - set color of one char on screen, same as previous (A)
+; SKIP - skip one char on screen (when you already know it's blank)
 ; in:  DE = V-RAM address
 ; out: DE = next V-RAM address
 ;
@@ -256,7 +266,7 @@ PWALL:	LD	A,CCWALL
 	JP	PO,AGAIN
 NOWALL:	LD	A,CCNONE
 AGAIN:	LD	(DE),A		; write to V-RAM
-	INC	DE
+SKIP:	INC	DE
 	LD	HL,FCOUNT
 	DEC	(HL)
 	RET	Z
@@ -274,38 +284,62 @@ DRAW:	LD	HL,(FPTR)
 ; ---------------------------------
 
 ; ROWS - row types, from top to bottom on screen
-; 0         = draw row using VCMD
-; HCMD-VCMD = draw row using HCMD
+; 0         = draw row using HCMD
+; VCMD-HCMD = draw row using VCMD
+; SCMD-HCMD = draw row using SCMD
 ;
-ROWS:	DEFB	0
+ROWS:	DEFB	VCMD-HCMD
+	DEFB	SCMD-HCMD
+	DEFB	SCMD-HCMD
+	DEFB	VCMD-HCMD
 	DEFB	0
+	DEFB	VCMD-HCMD
+	DEFB	SCMD-HCMD
+	DEFB	SCMD-HCMD
+	DEFB	VCMD-HCMD
 	DEFB	0
+	DEFB	VCMD-HCMD
+	DEFB	VCMD-HCMD
+	DEFB	VCMD-HCMD
+	DEFB	VCMD-HCMD
 	DEFB	0
-	DEFB	HCMD-VCMD
+	DEFB	VCMD-HCMD
+	DEFB	VCMD-HCMD
+	DEFB	SCMD-HCMD
+	DEFB	VCMD-HCMD
 	DEFB	0
+	DEFB	VCMD-HCMD
+	DEFB	SCMD-HCMD
+	DEFB	SCMD-HCMD
+	DEFB	VCMD-HCMD
 	DEFB	0
-	DEFB	0
-	DEFB	0
-	DEFB	HCMD-VCMD
-	DEFB	0
-	DEFB	0
-	DEFB	0
-	DEFB	0
-	DEFB	HCMD-VCMD
-	DEFB	0
-	DEFB	0
-	DEFB	0
-	DEFB	0
-	DEFB	HCMD-VCMD
-	DEFB	0
-	DEFB	0
-	DEFB	0
-	DEFB	0
-	DEFB	HCMD-VCMD
-	DEFB	0
-	DEFB	0
-	DEFB	0
-	DEFB	0
+	DEFB	VCMD-HCMD
+	DEFB	SCMD-HCMD
+	DEFB	SCMD-HCMD
+	DEFB	VCMD-HCMD
+
+; HCMD - commands to draw a row with horizontal walls
+; CWALL-DRAW = draw a corner stone
+; HCWALL-DRAW = draw horizontal wall + corner stone
+; HWALL-DRAW = draw a piece of a horizontal wall
+; AGAIN-DRAW = draw the same thing as in the previous command
+;
+HCMD:	DEFB	HWALL-DRAW
+	DEFB	HWALL-DRAW
+	DEFB	HWALL-DRAW
+	DEFB	HWALL-DRAW
+	DEFB	CWALL-DRAW
+	DEFB	HCWALL-DRAW
+	DEFB	HCWALL-DRAW
+	DEFB	HCWALL-DRAW
+	DEFB	HCWALL-DRAW
+	DEFB	HCWALL-DRAW
+	DEFB	HCWALL-DRAW
+	DEFB	HCWALL-DRAW
+	DEFB	HWALL-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
+	DEFB	AGAIN-DRAW
 
 ; VCMD - commands to draw a row crossing vertical walls
 ; VWALL-DRAW = draw a piece of a vertical wall
@@ -330,27 +364,28 @@ VCMD:	DEFB	NOWALL-DRAW
 	DEFB	AGAIN-DRAW
 	DEFB	AGAIN-DRAW
 
-; HCMD - commands to draw a row with horizontal walls
-; CWALL-DRAW = draw a corner stone
-; HCWALL-DRAW = draw horizontal wall + corner stone
-; HWALL-DRAW = draw a piece of a horizontal wall
+; SCMD - commands to draw a row crossing vertical walls
+; VWALL-DRAW = draw a piece of a vertical wall
+; SVWALL-DRAW = draw/skip blanks + piece of a vertical wall
+; NOWALL-DRAW = draw a blank
+; SKIP-DRAW = skip
 ; AGAIN-DRAW = draw the same thing as in the previous command
 ;
-HCMD:	DEFB	HWALL-DRAW
-	DEFB	HWALL-DRAW
-	DEFB	HWALL-DRAW
-	DEFB	HWALL-DRAW
-	DEFB	CWALL-DRAW
-	DEFB	HCWALL-DRAW
-	DEFB	HCWALL-DRAW
-	DEFB	HCWALL-DRAW
-	DEFB	HCWALL-DRAW
-	DEFB	HCWALL-DRAW
-	DEFB	HCWALL-DRAW
-	DEFB	HCWALL-DRAW
-	DEFB	HWALL-DRAW
-	DEFB	AGAIN-DRAW
-	DEFB	AGAIN-DRAW
+SCMD:	DEFB	NOWALL-DRAW
+	DEFB	SKIP-DRAW
+	DEFB	SKIP-DRAW
+	DEFB	NOWALL-DRAW
+	DEFB	VWALL-DRAW
+	DEFB	SVWALL-DRAW
+	DEFB	SVWALL-DRAW
+	DEFB	SVWALL-DRAW
+	DEFB	SVWALL-DRAW
+	DEFB	SVWALL-DRAW
+	DEFB	SVWALL-DRAW
+	DEFB	SVWALL-DRAW
+	DEFB	NOWALL-DRAW
+	DEFB	SKIP-DRAW
+	DEFB	SKIP-DRAW
 	DEFB	AGAIN-DRAW
 
 ; ---------------------------------
