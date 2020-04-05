@@ -20,4 +20,4 @@ all: \
 	z80asm $< -o$*.bin -L$*.lbl
 
 clean:
-	$(RM) *.lbl *.bin *.mzt *.raw *.wav
+	$(RM) *.bin *.lbl *.mzt *.raw *.wav
