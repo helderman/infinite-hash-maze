@@ -33,81 +33,38 @@ VUP:	EQU	397
 ; START - start game
 ; Infinite loop; will never exit
 ;
-START:	LD	HL,VRAM
-	LD	DE,VRAM+1
-	LD	(HL),L		; 0 = space character
-	LD	B,6		; BC := 0600h~06FFh
-	LDIR
+START:	LD	HL,VBUF
+	LD	DE,VBUF+1
+	LD	BC,1000
 	LD	(HL),CCNONE
-	LD	B,6		; BC := 0600h
+	LDIR
+	LD	B,4		; BC := 1024
+	LD	(HL),C		; 0 = space character
 	LDIR
 	LD	IX,VRAM + 458
 	LD	(IX+41),0FEH
 	LD	(IX+42),0FDH
 	LD	(IX+81),0FBH
 	LD	(IX+82),0F7H
-FRAME:	LD	B,8		; give CRT a head start of 7 scan lines
-	LD	DE,PPI+2	; DE := E002h (VBLNK)
+FRAME:	LD	DE,PPI+2	; STEP 1: copy buffer to video RAM
 SYNC1:	LD	A,(DE)
 	RLCA
-	JR	C,SYNC1		; wait until we are in blanking period
+	JR	NC,SYNC1
 SYNC2:	LD	A,(DE)
 	RLCA
-	JR	NC,SYNC2	; wait until we leave blanking period
-	LD	E,LS367		; DE := E008h (HBLNK)
-	DJNZ	SYNC1
+	JR	C,SYNC2		; wait until we are in blanking period
+	LD	HL,VBUF
 	LD	DE,VRAMC
-	LD	HL,RCOUNT
-	LD	(HL),25		; number of character rows on screen
-	LD	HL,(HCURR)
-	LD	(HSCAN),HL
-	LD	HL,(VCURR)
-	LD	(VSCAN),HL
-	LD	HL,(YCURR)
-	LD	BC,ROWS
-	ADD	HL,BC
-LOOP:	PUSH	HL
-	LD	A,(HL)
-	OR	A
-	JR	NZ,VROW
-	LD	HL,(HSCAN)
-	LD	BC,HDOWN
-	ADD	HL,BC
-	LD	(HSCAN),HL
-	LD	HL,(VSCAN)
-	LD	BC,VDOWN
-	ADD	HL,BC
-	LD	(VSCAN),HL
-VROW:	LD	HL,(XCURR)
-	ADD	A,L
-	LD	L,A
-	LD	BC,HCMD
-	ADD	HL,BC
-	LD	(FPTR),HL
-	LD	HL,FCOUNT
-	LD	(HL),12		; number of commands per row
-	CALL	DRAW		; draw a single row
-	LD	HL,(HSCAN)
-	LD	BC,8*HLEFT
-	ADD	HL,BC
-	LD	(HSCAN),HL
-	LD	HL,(VSCAN)
-	LD	BC,8*VLEFT
-	ADD	HL,BC
-	LD	(VSCAN),HL
-	LD	HL,RCOUNT
-	DEC	(HL)
-	POP	HL
-	INC	HL
-	JR	NZ,LOOP		; until (RCOUNT) = 0
-	LD	HL,PPI
+	LD	BC,1000
+	LDIR			; copy color data; should take 6.1 ms
+	LD	HL,PPI		; STEP 2: keyboard & collision detect
 	DI
 	LD	(HL),0F7H
 	INC	HL
 	LD	E,CCNONE
-	LD	D,(HL)		; A := xxUDRLxx (binary)
+	LD	D,(HL)		; D := xxUDRLxx (binary)
 	EI
-	LD	IX,VRAMC + 458
+	LD	IX,VBUF + 458
 	LD	HL,XCURR
 	BIT	2,D
 	JR	NZ,KEYS1
@@ -174,7 +131,51 @@ KEYS7:	LD	(HL),A
 	LD	HL,(VCURR)
 	ADD	HL,DE
 	LD	(VCURR),HL
-KEYS8:	JP	FRAME
+KEYS8:	LD	DE,VBUF		; STEP 3: build new frame in buffer
+	LD	HL,RCOUNT
+	LD	(HL),25		; number of character rows on screen
+	LD	HL,(HCURR)
+	LD	(HSCAN),HL
+	LD	HL,(VCURR)
+	LD	(VSCAN),HL
+	LD	HL,(YCURR)
+	LD	BC,ROWS
+	ADD	HL,BC
+LOOP:	PUSH	HL
+	LD	A,(HL)
+	OR	A
+	JR	NZ,VROW
+	LD	HL,(HSCAN)
+	LD	BC,HDOWN
+	ADD	HL,BC
+	LD	(HSCAN),HL
+	LD	HL,(VSCAN)
+	LD	BC,VDOWN
+	ADD	HL,BC
+	LD	(VSCAN),HL
+VROW:	LD	HL,(XCURR)
+	ADD	A,L
+	LD	L,A
+	LD	BC,HCMD
+	ADD	HL,BC
+	LD	(FPTR),HL
+	LD	HL,FCOUNT
+	LD	(HL),12		; number of commands per row
+	CALL	DRAW		; draw a single row
+	LD	HL,(HSCAN)
+	LD	BC,8*HLEFT
+	ADD	HL,BC
+	LD	(HSCAN),HL
+	LD	HL,(VSCAN)
+	LD	BC,8*VLEFT
+	ADD	HL,BC
+	LD	(VSCAN),HL
+	LD	HL,RCOUNT
+	DEC	(HL)
+	POP	HL
+	INC	HL
+	JR	NZ,LOOP		; until (RCOUNT) = 0
+	JP	FRAME
 
 ; HCWALL - draw horizontal wall + corner
 ; CWALL - draw corner
@@ -407,5 +408,7 @@ VSCAN:	DEFW	0	; hash of vertical wall being painted
 FPTR:	DEFW	0	; points to next function
 FCOUNT:	DEFB	0	; count down functions on current row
 RCOUNT:	DEFB	0	; count down rows
+
+VBUF:	EQU	VRAM-1001	; video buffer
 
 	END
