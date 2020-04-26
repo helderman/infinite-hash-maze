@@ -1,0 +1,509 @@
+; ---------------------------------
+; Infinite Hash Maze
+; ---------------------------------
+
+; MZ-700 memory map
+VRAM:	EQU	0D000H	; video RAM (40x25 character matrix)
+VRAMH:	EQU	0D0H	; most significant byte of VRAM
+SPACE:	EQU	00H	; display code: space
+WALL:	EQU	43H	; display code: whole wall character
+WALLA:	EQU	3AH	; display code: half horizontal above
+WALLB:	EQU	7AH	; display code: half horizontal below
+WALLL:	EQU	3BH	; display code: half vertical left
+WALLR:	EQU	7BH	; display code: half vertical right
+
+; MZ-700 system calls
+GETKEY:	EQU	001BH	; poll keyboard (11H-14H = down/up/right/left)
+VBLANK:	EQU	0DA6H	; wait until start of vertical blanking period
+DPCT:	EQU	0DDCH	; display control
+CLS:	EQU	0C6H	; display code to clear screen
+
+; Hash steps for horizontal walls
+HLEFT:	EQU	-563
+HRIGHT:	EQU	563
+HDOWN:	EQU	-761
+HUP:	EQU	761
+
+; Hash steps for vertical walls
+VLEFT:	EQU	-1409
+VRIGHT:	EQU	1409
+VDOWN:	EQU	-397
+VUP:	EQU	397
+
+; ---------------------------------
+; Macros
+; ---------------------------------
+
+; LDAIYL - workaround for unrecognized LD A,IYL
+
+LDAIYL:	MACRO
+	DEFB	0FDH	; prefix for IY
+	LD	A,L
+	ENDM
+
+; HASHI - hash and increment
+; in:     DE = post-increment for seed
+; in/out: HL = seed
+; out:    PO = wall, PE = no wall
+;         CF = 0
+; 3 bytes; 19 cycles
+
+HASHI:	MACRO
+	LD	A,L
+	XOR	H
+	ADD	HL,DE
+	ENDM
+
+; CALCH - calculate all horizontal walls, store them in workspace
+; Clobbers AF, BC, DE, HL, IY
+; 42 or 46 bytes; TODO cycles
+
+CALCH:	MACRO	CHAR1 CHAR2
+	LD	DE,HRIGHT
+	LD	HL,(HCURR)
+	LD	IY,WORKSP+18
+.OUTER:	LD	B,10
+.INNER:	HASHI
+	JP	PE,.SKIP
+	LD	(IY+0),CHAR1
+	IF	CHAR2!=SPACE
+	LD	(IY+19),CHAR2
+	ENDIF
+.SKIP:	INC	IY
+	INC	IY
+	DJNZ	.INNER
+	LD	C,18	; B is already zero
+	ADD	IY,BC
+	LD	BC,HDOWN-10*HRIGHT
+	ADD	HL,BC
+	LDAIYL
+	CP	WORKSP+13*19-1	; repeat 6 times
+	JR	NZ,.OUTER
+	ENDM
+
+; CALCV - calculate all vertical walls, store them in workspace
+; Clobbers AF, BC, DE, HL, IY
+; 42 or 46 bytes; TODO cycles
+
+CALCV:	MACRO	CHAR1 CHAR2
+	LD	DE,VRIGHT
+	LD	HL,(VCURR)
+	LD	IY,WORKSP
+.OUTER:	LD	B,9
+.INNER:	HASHI
+	JP	PE,.SKIP
+	LD	(IY+0),CHAR1
+	IF	CHAR2!=0
+	LD	(IY+1),CHAR2
+	ENDIF
+.SKIP:	INC	IY
+	INC	IY
+	DJNZ	.INNER
+	LD	C,20	; B is already zero
+	ADD	IY,BC
+	LD	BC,VDOWN-9*VRIGHT
+	ADD	HL,BC
+	LDAIYL
+	CP	WORKSP+14*19	; repeat 7 times
+	JR	NZ,.OUTER
+	ENDM
+
+; CALCC - calculate all corner stones, store them in workspace
+; Clobbers AF, BC, DE, HL, IY
+; 37 or 54 bytes; TODO cycles
+
+CALCC:	MACRO	CHAR1 CHAR2 REFA REFB REFC REFD
+	LD	IY,WORKSP+18
+.OUTER:	LD	B,9
+.INNER:	INC	IY
+	LD	A,REFC
+	OR	REFD
+	IF	CHAR2==SPACE
+	OR	REFA
+	OR	REFB
+	LD	(IY+0),A
+	ELSE
+	LD	E,REFA
+	LD	D,REFB
+	OR	E
+	OR	D
+	JR	Z,.SKIP2	; no walls at all here
+	XOR	A		; A := SPACE
+	CP	E
+	JR	NZ,.SKIP1
+	LD	E,CHAR1
+.SKIP1:	LD	(IY+0),E
+	CP	D
+	JR	NZ,.SKIP2
+	LD	REFB,CHAR2	; renaming REFB to REF2 would cause error (z80asm bug)
+	ENDIF
+.SKIP2:	INC	IY
+	DJNZ	.INNER
+	LD	C,20		; B is already zero
+	ADD	IY,BC
+	LDAIYL
+	CP	WORKSP+13*19-1	; repeat 6 times
+	JR	NZ,.OUTER
+	ENDM
+
+; ---------------------------------
+; Code
+; ---------------------------------
+
+	ORG	4000H
+
+START:	LD	A,CLS
+	CALL	DPCT
+	LD	IX,VRAM+458	; center of screen
+	CALL	DRAWA
+	CALL	DUMPX
+	CALL	DUMPY
+POLL:	LD	HL,POLL
+	PUSH	HL	; push return address (main loop)
+	CALL	GETKEY	; it's OK for the stack to clobber the workspace here
+	LD	HL,WORKSP
+	LD	DE,WORKSP+1
+	LD	BC,245
+	LD	(HL),SPACE
+	LDIR		; prefill the workspace with spaces
+	SUB	11H
+	JR	Z,MOVD	; 11h = down
+	CP	3
+	JR	Z,MOVL	; 14h = left
+	RET	NC
+	DEC	A
+	JR	Z,MOVU	; 12h = up
+	; fall through to MOVR; 13h = right
+
+; MOVR - player moves right
+
+MOVR:	LD	A,(IX+43)
+	OR	(IX+83)
+	RET	NZ	; blocked by wall
+	CALL	DRAWH
+	CALL	VBLANK
+	CALL	DUMPX
+	LD	HL,XCURR
+	INC	(HL)
+	CALL	MOVX
+	JR	MOVLR
+
+; MOVL - player moves left
+
+MOVL:	LD	A,(IX+40)
+	OR	(IX+80)
+	RET	NZ	; blocked by wall
+	LD	HL,XCURR
+	DEC	(HL)
+	CALL	MOVX
+	CALL	DRAWH
+	CALL	VBLANK
+	CALL	DUMPX
+MOVLR:	CALL	DRAWA
+	CALL	VBLANK
+	; fall through to DUMPX
+
+; DUMPX - render walls after horizontal movement
+
+DUMPX:	LD	B,0
+	LD	A,(XCURR)
+	LD	C,A
+	CP	4		; 4 = edge case
+	JR	NZ,DUMPX1
+	INC	BC		; INC C is faster but affects ZF
+DUMPX1:	LD	HL,CODEX
+	ADD	HL,BC
+	LD	DE,DUMPX5
+	LD	C,7
+	LDIR			; self-modifying code
+	LD	A,(YCURR)
+	LD	DE,VRAM
+	LD	HL,WORKSP
+	JR	NZ,DUMPX2	; ZF still from CP 4
+	INC	HL
+DUMPX2:	LD	C,16		; B is already 0
+	SUB	1
+	JR	C,DUMPX3
+	JR	Z,DUMPX4
+	SBC	HL,BC		; beforehand, CF is cleared
+	JR	DUMPX5
+DUMPX3:	LD	A,4
+DUMPX4:	INC	HL
+	INC	HL
+	INC	HL
+DUMPX5:	DEFS	+7		; code copied here from CODEX
+	JP	PE,DUMPX5	; inner loop: 8*60 cycles
+	LD	C,A
+	LD	A,E
+	CP	0E8H		; 03E8H = 1000
+	LD	A,C
+	JR	NZ,DUMPX2	; outer loop
+	JR	DUMPP
+
+; MOVD - player moves down
+
+MOVD:	LD	A,(IX+121)
+	OR	(IX+122)
+	RET	NZ	; blocked by wall
+	CALL	DRAWV
+	CALL	VBLANK
+	CALL	DUMPY
+	LD	HL,YCURR
+	DEC	(HL)
+	CALL	MOVY
+	JR	MOVUD
+
+; MOVU - player moves up
+
+MOVU:	LD	A,(IX+1)
+	OR	(IX+2)
+	RET	NZ	; blocked by wall
+	LD	HL,YCURR
+	INC	(HL)
+	CALL	MOVY
+	CALL	DRAWV
+	CALL	VBLANK
+	CALL	DUMPY
+MOVUD:	CALL	DRAWA
+	CALL	VBLANK
+	; fall through to DUMPY
+
+; DUMPY - render walls after vertical movement
+
+DUMPY:	LD	HL,CODEY
+	LD	A,(XCURR)
+	LD	B,A
+	OR	A
+	JR	Z,DUMPY2
+	LD	C,255		; anything big will do
+	LD	A,0B0H		; search past LDIR
+DUMPY1:	CPIR
+	DJNZ	DUMPY1
+DUMPY2:	LD	C,11		; B is already 0
+	LD	DE,DUMPY7
+	LDIR			; self-modifying code
+	LD	HL,WORKSP+19
+	LD	A,(XCURR)
+	OR	A
+	JR	NZ,DUMPY3
+	INC	HL
+DUMPY3:	LD	DE,VRAM
+	LD	A,(YCURR)
+	OR	A
+	JR	NZ,DUMPY4
+	LD	C,19		; B is already 0
+	ADD	HL,BC
+DUMPY4:	LD	C,40		; width of screen
+	SUB	1
+	JR	C,DUMPY5
+	JR	Z,DUMPY6
+	EX	DE,HL
+	ADD	HL,BC
+	EX	DE,HL
+	JR	DUMPY8
+DUMPY5:	LD	A,4
+DUMPY6:	LDI
+DUMPY7:	DEFS	+11		; code will be copied here from CODEY
+	JP	PE,DUMPY6	; inner loop: 8*108 cycles
+DUMPY8:	LD	C,A
+	LD	A,E
+	CP	0E8H
+	LD	A,C
+	JR	NZ,DUMPY4
+	; fall through to DUMPP
+
+; DUMPP - render player
+
+DUMPP:	LD	(IX+41),0FEH
+	LD	(IX+42),0FDH
+	LD	(IX+81),0FBH
+	LD	(IX+82),0F7H
+	RET
+
+; DRAWH - draw walls, misaligned horizontally
+
+DRAWH:	CALCH	WALL SPACE
+	CALCV	WALLL WALLR
+	CALCC	WALLL WALLR (IX-1) (IX+1) (IX-19) (IX+19)
+	RET
+
+; DRAWV - draw walls, misaligned vertically
+
+DRAWV:	CALCH	WALLA WALLB
+	CALCV	WALL SPACE
+	CALCC	WALLA WALLB (IX-19) (IX+19) (IX-1) (IX+1)
+	RET
+
+; DRAWA - draw walls, aligned
+
+DRAWA:	CALCH	WALL SPACE
+	CALCV	WALL SPACE
+	CALCC	WALL SPACE (IX-1) (IX+1) (IX-19) (IX+19)
+	RET
+
+; MOVX - change player position horizontally
+
+MOVX:	LD	A,(HL)
+	SUB	5
+	RET	C
+	LD	BC,HRIGHT
+	LD	DE,VRIGHT
+	JR	Z,MOVXY
+	LD	BC,HLEFT
+	LD	DE,VLEFT
+	JR	MOVXY4
+
+; MOVY - change player position vertically
+
+MOVY:	LD	A,(HL)
+	SUB	5
+	RET	C
+	LD	BC,HUP
+	LD	DE,VUP
+	JR	Z,MOVXY
+	LD	BC,HDOWN
+	LD	DE,VDOWN
+MOVXY4:	LD	A,4
+MOVXY:	LD	(HL),A
+	LD	HL,(HCURR)
+	ADD	HL,BC
+	LD	(HCURR),HL
+	LD	HL,(VCURR)
+	ADD	HL,DE
+	LD	(VCURR),HL
+	RET
+
+; ---------------------------------
+; Code that is copied elsewhere
+; ---------------------------------
+
+; CODEX - pick a subsequence of 5 instructions (7 bytes, 50 cycles)
+;         to fill a row of 5 characters in V-RAM
+
+CODEX:	INC	DE
+	INC	DE
+	INC	DE
+	LDI
+	LDI
+	INC	DE
+	INC	DE
+	INC	DE
+	LDI
+
+; CODEY - pick a subsequence of 7 instructions (11 bytes, 82 cycles)
+;         to fill a row of 5 characters in V-RAM
+
+CODEY:	DEC	HL	; first instruction when (XCURR)=0
+	LDI
+	DEC	HL	; first instruction when (XCURR)=1
+	LDI
+	LDI		; first instruction when (XCURR)=2
+	LDI		; first instruction when (XCURR)=3
+	DEC	HL	; first instruction when (XCURR)=4
+	LDI
+	DEC	HL
+	LDI
+	DEC	HL
+	LDI
+	LDI
+
+; ---------------------------------
+; Initialized variables
+; ---------------------------------
+
+; XCURR - current X position, sub-cell
+;
+; 0: ---+----+----+----+----+----+----+----+-
+; 1: --+----+----+----+-PL-+----+----+----+--
+; 2: -+----+----+----+----+----+----+----+---
+; 3: +----+----+----+----+----+----+----+----
+; 4: ----+----+----+----+----+----+----+----+
+
+XCURR:	DEFB	1
+
+; YCURR - current X position, sub-cell
+;
+;  0   1   2   3   4
+;  |  -+-  |   |   |
+;  |   |  -+-  |   |
+;  |   |   |  -+-  |
+;  |   |   |   |  -+-
+; -+-  |   |   |   |
+;  |  -+-  |   |   |
+;  |   |  -+-  |   |
+;  |   |   |  -+-  |
+;  |   |   |   |  -+-
+; -+-  |   |   |   |
+;  |  -+-  |   |   |
+; PL   |  -+-  |   |
+; PL   |   |  -+-  |
+;  |   |   |   |  -+-
+; -+-  |   |   |   |
+;  |  -+-  |   |   |
+;  |   |  -+-  |   |
+;  |   |   |  -+-  |
+;  |   |   |   |  -+-
+; -+-  |   |   |   |
+;  |  -+-  |   |   |
+;  |   |  -+-  |   |
+;  |   |   |  -+-  |
+;  |   |   |   |  -+-
+; -+-  |   |   |   |
+
+YCURR:	DEFB	0
+
+; HCURR - current position, hashed for horizontal walls
+
+HCURR:	DEFW	33322+4*HLEFT+2*HUP
+
+; VCURR - current position, hashed for vertical walls
+
+VCURR:	DEFW	35273+3*VLEFT+3*VUP
+
+; ---------------------------------
+; Uninitialized variables
+; ---------------------------------
+
+; WORKSP - workspace for display codes
+;
+;    0123456789........18
+;
+; A   |.|.|.|.|.|.|.|.|.
+; B  -+-+-+-+-+-+-+-+-+-
+; C  .|.|.|.|.|.|.|.|.|.
+; D  -+-+-+-+-+-+-+-+-+-
+; E  .|.|.|.|.|.|.|.|.|.
+; F  -+-+-+-+-+-+-+-+-+-
+; G  .|.|.|.|.|.|.|.|.|.
+; H  -+-+-+-+-+-+-+-+-+-
+; I  .|.|.|.|.|.|.|.|.|.
+; J  -+-+-+-+-+-+-+-+-+-
+; K  .|.|.|.|.|.|.|.|.|.
+; L  -+-+-+-+-+-+-+-+-+-
+; M  .|.|.|.|.|.|.|.|.|.
+;
+; Legend:
+; | vertical wall
+; - horizontal wall
+; + corner stone
+; . spill from misaligned horizontal wall above or vertical wall left
+;
+; Display codes:
+; +-----+  +-----+  +-----+  +-----+  +-----+  +-----+
+; |     |  |/////|  |/////|  |     |  |//|  |  |  |//|
+; |     |  |/////|  |-----|  |-----|  |//|  |  |  |//|
+; |     |  |/////|  |     |  |/////|  |//|  |  |  |//|
+; +-----+  +-----+  +-----+  +-----+  +-----+  +-----+
+;  SPACE    WALL     WALLA    WALLB    WALLL    WALLR
+;
+; Display codes are stored in the workspace as bytes, row by row:
+; A1,A2,...,A18,B0,B1,B2,...,B18,C0,......,M18
+; Notice A0 is not stored (tiny optimization; it is unused),
+; leaving a total of 19*13-1 = 246 bytes.
+;
+; Row M and column 18 are never visible on screen;
+; they are only used to calculate adjacent corner stones.
+
+WORKSP:		; DEFS +246 left out to keep the binary file small
+
+	END
