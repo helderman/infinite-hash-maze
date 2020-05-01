@@ -110,6 +110,7 @@ CALCV:	MACRO	CHAR1 CHAR2
 
 ; CALCC - calculate all corner stones, store them in workspace
 ; Clobbers AF, BC, DE, HL, IY
+; Always exits with B=0
 ; 37 or 54 bytes; TODO cycles
 
 CALCC:	MACRO	CHAR1 CHAR2 REFA REFB REFC REFD
@@ -155,9 +156,18 @@ CALCC:	MACRO	CHAR1 CHAR2 REFA REFB REFC REFD
 START:	LD	A,CLS
 	CALL	DPCT
 	LD	IX,VRAM+458	; center of screen
-	CALL	DRAWA
+	CALL	DRAWH
+	LD	A,WALLR
+	CALL	SNR2
 	CALL	DUMPX
+	CALL	DRAWV
+	LD	A,WALLB
+	CALL	SNR2
 	CALL	DUMPY
+	LD	(IX+41),0FEH
+	LD	(IX+42),0FDH
+	LD	(IX+81),0FBH
+	LD	(IX+82),0F7H
 POLL:	LD	HL,POLL
 	PUSH	HL	; push return address (main loop)
 	CALL	GETKEY	; it's OK for the stack to clobber the workspace here
@@ -167,191 +177,27 @@ POLL:	LD	HL,POLL
 	LD	(HL),SPACE
 	LDIR		; prefill the workspace with spaces
 	SUB	11H
-	JR	Z,MOVD	; 11h = down
+	JP	Z,MOVD	; 11h = down (too far for JR)
 	CP	3
 	JR	Z,MOVL	; 14h = left
 	RET	NC
 	DEC	A
-	JR	Z,MOVU	; 12h = up
-	; fall through to MOVR; 13h = right
+	JR	NZ,MOVR	; 13h = right
+	; fall through to MOVU; 12h = up
 
-; MOVR - player moves right
-
-MOVR:	LD	A,(IX+43)
-	OR	(IX+83)
-	RET	NZ	; blocked by wall
-	CALL	DRAWH
-	CALL	VBLANK
-	CALL	DUMPX
-	LD	HL,XCURR
-	INC	(HL)
-	CALL	MOVX
-	JR	MOVLR
-
-; MOVL - player moves left
-
-MOVL:	LD	A,(IX+40)
-	OR	(IX+80)
-	RET	NZ	; blocked by wall
-	LD	HL,XCURR
-	DEC	(HL)
-	CALL	MOVX
-	CALL	DRAWH
-	CALL	VBLANK
-	CALL	DUMPX
-MOVLR:	CALL	DRAWA
-	CALL	VBLANK
-	; fall through to DUMPX
-
-; DUMPX - render walls after horizontal movement
-
-DUMPX:	LD	B,0
-	LD	A,(XCURR)
-	LD	C,A
-	CP	4		; 4 = edge case
-	JR	NZ,DUMPX1
-	INC	BC		; INC C is faster but affects ZF
-DUMPX1:	LD	HL,CODEX
-	ADD	HL,BC
-	LD	DE,DUMPX5
-	LD	C,7
-	LDIR			; self-modifying code
-	LD	A,(YCURR)
-	LD	DE,VRAM
-	LD	HL,WORKSP
-	JR	NZ,DUMPX2	; ZF still from CP 4
-	INC	HL
-DUMPX2:	LD	C,16		; B is already 0
-	SUB	1
-	JR	C,DUMPX3
-	JR	Z,DUMPX4
-	SBC	HL,BC		; beforehand, CF is cleared
-	JR	DUMPX5
-DUMPX3:	LD	A,4
-DUMPX4:	INC	HL
-	INC	HL
-	INC	HL
-DUMPX5:	DEFS	+7		; code copied here from CODEX
-	JP	PE,DUMPX5	; inner loop: 8*60 cycles
-	LD	C,A
-	LD	A,E
-	CP	0E8H		; 03E8H = 1000
-	LD	A,C
-	JR	NZ,DUMPX2	; outer loop
-	JR	DUMPP
-
-; MOVD - player moves down
-
-MOVD:	LD	A,(IX+121)
-	OR	(IX+122)
-	RET	NZ	; blocked by wall
-	CALL	DRAWV
-	CALL	VBLANK
-	CALL	DUMPY
-	LD	HL,YCURR
-	DEC	(HL)
-	CALL	MOVY
-	JR	MOVUD
-
-; MOVU - player moves up
+; MOVU - player moves up (walls move down)
 
 MOVU:	LD	A,(IX+1)
 	OR	(IX+2)
 	RET	NZ	; blocked by wall
+	CALL	DRAWV
+	CALL	DUMPYV
+	LD	A,WALLA
+	CALL	SNR2
+	CALL	DUMPYV
 	LD	HL,YCURR
 	INC	(HL)
-	CALL	MOVY
-	CALL	DRAWV
-	CALL	VBLANK
-	CALL	DUMPY
-MOVUD:	CALL	DRAWA
-	CALL	VBLANK
-	; fall through to DUMPY
-
-; DUMPY - render walls after vertical movement
-
-DUMPY:	LD	HL,CODEY
-	LD	A,(XCURR)
-	LD	B,A
-	OR	A
-	JR	Z,DUMPY2
-	LD	C,255		; anything big will do
-	LD	A,0B0H		; search past LDIR
-DUMPY1:	CPIR
-	DJNZ	DUMPY1
-DUMPY2:	LD	C,11		; B is already 0
-	LD	DE,DUMPY7
-	LDIR			; self-modifying code
-	LD	HL,WORKSP+19
-	LD	A,(XCURR)
-	OR	A
-	JR	NZ,DUMPY3
-	INC	HL
-DUMPY3:	LD	DE,VRAM
-	LD	A,(YCURR)
-	OR	A
-	JR	NZ,DUMPY4
-	LD	C,19		; B is already 0
-	ADD	HL,BC
-DUMPY4:	LD	C,40		; width of screen
-	SUB	1
-	JR	C,DUMPY5
-	JR	Z,DUMPY6
-	EX	DE,HL
-	ADD	HL,BC
-	EX	DE,HL
-	JR	DUMPY8
-DUMPY5:	LD	A,4
-DUMPY6:	LDI
-DUMPY7:	DEFS	+11		; code will be copied here from CODEY
-	JP	PE,DUMPY6	; inner loop: 8*108 cycles
-DUMPY8:	LD	C,A
-	LD	A,E
-	CP	0E8H
-	LD	A,C
-	JR	NZ,DUMPY4
-	; fall through to DUMPP
-
-; DUMPP - render player
-
-DUMPP:	LD	(IX+41),0FEH
-	LD	(IX+42),0FDH
-	LD	(IX+81),0FBH
-	LD	(IX+82),0F7H
-	RET
-
-; DRAWH - draw walls, misaligned horizontally
-
-DRAWH:	CALCH	WALL SPACE
-	CALCV	WALLL WALLR
-	CALCC	WALLL WALLR (IX-1) (IX+1) (IX-19) (IX+19)
-	RET
-
-; DRAWV - draw walls, misaligned vertically
-
-DRAWV:	CALCH	WALLA WALLB
-	CALCV	WALL SPACE
-	CALCC	WALLA WALLB (IX-19) (IX+19) (IX-1) (IX+1)
-	RET
-
-; DRAWA - draw walls, aligned
-
-DRAWA:	CALCH	WALL SPACE
-	CALCV	WALL SPACE
-	CALCC	WALL SPACE (IX-1) (IX+1) (IX-19) (IX+19)
-	RET
-
-; MOVX - change player position horizontally
-
-MOVX:	LD	A,(HL)
-	SUB	5
-	RET	C
-	LD	BC,HRIGHT
-	LD	DE,VRIGHT
-	JR	Z,MOVXY
-	LD	BC,HLEFT
-	LD	DE,VLEFT
-	JR	MOVXY4
+	; fall through to MOVY
 
 ; MOVY - change player position vertically
 
@@ -371,6 +217,177 @@ MOVXY:	LD	(HL),A
 	LD	HL,(VCURR)
 	ADD	HL,DE
 	LD	(VCURR),HL
+	RET
+
+; MOVL - player moves left (walls move right)
+
+MOVL:	LD	A,(IX+40)
+	OR	(IX+80)
+	RET	NZ	; blocked by wall
+	CALL	DRAWH
+	CALL	DUMPXV
+	LD	A,WALLL
+	CALL	SNR2
+	CALL	DUMPXV
+	LD	HL,XCURR
+	DEC	(HL)
+	; fall through to MOVX
+
+; MOVX - change player position horizontally
+
+MOVX:	LD	A,(HL)
+	SUB	5
+	RET	C
+	LD	BC,HRIGHT
+	LD	DE,VRIGHT
+	JR	Z,MOVXY
+	LD	BC,HLEFT
+	LD	DE,VLEFT
+	JR	MOVXY4
+
+; MOVR - player moves right (walls move left)
+
+MOVR:	LD	A,(IX+43)
+	OR	(IX+83)
+	RET	NZ	; blocked by wall
+	LD	HL,XCURR
+	INC	(HL)
+	CALL	MOVX
+	CALL	DRAWH
+	CALL	DUMPXV
+	LD	A,WALLR
+	CALL	SNR2
+	; fall through to DUMPXV
+
+; DUMPX - render walls after horizontal movement
+; Must be called with B=0; always exits with B=0
+
+DUMPXV:	CALL	VBLANK
+DUMPX:	LD	HL,(XCURR)
+	LD	C,L		; C := (XCURR)
+	LD	A,H		; A := (YCURR)
+	BIT	2,C		; NZ if C=4, an edge case
+	JR	Z,DUMPX1
+	INC	C		; C := 5, and still NZ
+DUMPX1:	LD	HL,CODEX
+	ADD	HL,BC
+	LD	DE,DUMPX5
+	LD	C,7
+	LDIR			; self-modifying code
+	LD	DE,VRAM
+	LD	HL,WORKSP
+	JR	Z,DUMPX2	; ZF still from BIT 2,C
+	INC	HL
+DUMPX2:	LD	C,16		; B is already 0
+	SUB	1
+	JR	C,DUMPX3
+	JR	Z,DUMPX4
+	SBC	HL,BC		; beforehand, CF is cleared
+	JR	DUMPX5
+DUMPX3:	LD	A,4
+DUMPX4:	INC	HL
+	INC	HL
+	INC	HL
+DUMPX5:	DEFS	+7		; code copied here from CODEX
+	JP	PE,DUMPX5	; inner loop: 8*60 cycles
+	LD	C,A
+	LD	A,E
+	CP	0E8H		; 03E8H = 1000
+	LD	A,C
+	JR	NZ,DUMPX2	; outer loop
+	RET
+
+; MOVD - player moves down (walls move up)
+
+MOVD:	LD	A,(IX+121)
+	OR	(IX+122)
+	RET	NZ	; blocked by wall
+	LD	HL,YCURR
+	DEC	(HL)
+	CALL	MOVY
+	CALL	DRAWV
+	CALL	DUMPYV
+	LD	A,WALLB
+	CALL	SNR2
+	; fall through to DUMPYV
+
+; DUMPY - render walls after vertical movement
+; Always exits with B=0
+
+DUMPYV:	CALL	VBLANK
+DUMPY:	LD	HL,CODEY
+	LD	A,(XCURR)
+	LD	B,A
+	OR	A
+	JR	Z,DUMPY2
+	LD	C,255		; anything big will do
+	LD	A,0B0H		; search past LDIR
+DUMPY1:	CPIR			; will not affect B
+	DJNZ	DUMPY1
+DUMPY2:	LD	C,11		; B is already 0
+	LD	DE,DUMPY7
+	LDIR			; self-modifying code
+	LD	HL,(XCURR)
+	XOR	A
+	CP	H		; is (YCURR)=0 ?
+	JR	NZ,DUMPY3
+	LD	C,19
+DUMPY3:	CP	L		; is (XCURR)=0 ?
+	JR	NZ,DUMPY4
+	INC	C
+DUMPY4:	LD	HL,WORKSP+19
+	ADD	HL,BC
+	LD	DE,VRAM
+	LD	C,40		; width of screen
+	SUB	1
+	JR	C,DUMPY5
+	JR	Z,DUMPY6
+	EX	DE,HL
+	ADD	HL,BC
+	EX	DE,HL
+	JR	DUMPY8
+DUMPY5:	LD	A,4
+DUMPY6:	LDI
+DUMPY7:	DEFS	+11		; code will be copied here from CODEY
+	JP	PE,DUMPY6	; inner loop: 8*108 cycles
+DUMPY8:	LD	C,A
+	LD	A,E
+	CP	0E8H
+	LD	A,C
+	JR	NZ,DUMPY4
+	RET
+
+; DRAWH - draw walls, misaligned horizontally
+
+DRAWH:	CALCH	WALL SPACE
+	CALCV	WALLL WALLR
+	CALCC	WALLL WALLR (IX-1) (IX+1) (IX-19) (IX+19)
+	RET
+
+; DRAWV - draw walls, misaligned vertically
+
+DRAWV:	CALCH	WALLA WALLB
+	CALCV	WALL SPACE
+	CALCC	WALLA WALLB (IX-19) (IX+19) (IX-1) (IX+1)
+	RET
+
+; SNR - search and replace
+; in: A = search
+;     E = replace
+;     B = 0
+
+SNR2:	LD	E,WALL
+	CALL	SNR
+	XOR	40H	; WALLA <-> WALLB, WALLL <-> WALLR
+	LD	E,B	; E := SPACE
+SNR:	LD	C,246
+	LD	HL,WORKSP
+SNR1:	CPIR
+	RET	NZ
+	DEC	HL
+	LD	(HL),E
+	INC	HL
+	JP	PE,SNR1
 	RET
 
 ; ---------------------------------
