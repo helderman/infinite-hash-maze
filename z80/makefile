@@ -1,6 +1,6 @@
 all: \
-	mazegame.mzt mazeview.mzt testtape.mzt \
-	mazegame.wav mazeview.wav testtape.wav
+	mazegame.mzt mazeview.mzt mazewalk.mzt testtape.mzt \
+	mazegame.wav mazeview.wav mazewalk.wav testtape.wav
 
 # GNU Make automatically recognizes %.bin and %.raw as intermediate files,
 # but not %.lbl. Giving a small hint here.
