@@ -111,16 +111,16 @@ CALCV:	MACRO	CHAR1 CHAR2
 ; Always exits with B=0
 ; 54 bytes; 10845 cycles (worst case)
 
-CALCC:	MACRO	CHAR1 CHAR2 REFA REFB REFC REFD
+CALCC:	MACRO	CHAR1 CHAR2 D1 D2
 	LD	IY,WORKSP+18
 .OUTER:	LD	B,9
 .INNER:	INC	IY
-	LD	E,REFA
-	LD	D,REFB
+	LD	E,(IY-D1)
+	LD	D,(IY+D1)
 	LD	A,E
 	OR	D
-	OR	REFC
-	OR	REFD
+	OR	(IY-D2)
+	OR	(IY+D2)
 	JR	Z,.SKIP2	; no walls at all here
 	XOR	A		; A := SPACE
 	CP	E
@@ -129,7 +129,12 @@ CALCC:	MACRO	CHAR1 CHAR2 REFA REFB REFC REFD
 .SKIP1:	LD	(IY+0),E
 	CP	D
 	JR	NZ,.SKIP2
-	LD	REFB,CHAR2
+	IF	D1=1		; workaround for z80asm bug
+	LD	(IY+1),CHAR2
+	ENDIF
+	IF	D1=19		; workaround for z80asm bug
+	LD	(IY+19),CHAR2
+	ENDIF
 .SKIP2:	INC	IY
 	DJNZ	.INNER
 	LD	C,20		; B is already zero
@@ -147,15 +152,17 @@ CALCC:	MACRO	CHAR1 CHAR2 REFA REFB REFC REFD
 
 START:	LD	A,CLS
 	CALL	DPCT
-	LD	IX,VRAM+458	; center of screen
-	CALL	DRAWH
+	CALL	CLRWSP
+	CALL	DRAWX
 	LD	A,WALLR
 	CALL	SNR2
 	CALL	DUMPX
-	CALL	DRAWV
+	CALL	CLRWSP
+	CALL	DRAWY
 	LD	A,WALLB
 	CALL	SNR2
 	CALL	DUMPY
+	LD	IX,VRAM+458	; center of screen
 	LD	(IX+41),0FEH
 	LD	(IX+42),0FDH
 	LD	(IX+81),0FBH
@@ -163,11 +170,7 @@ START:	LD	A,CLS
 POLL:	LD	HL,POLL
 	PUSH	HL	; push return address (main loop)
 	CALL	GETKEY	; it's OK for the stack to clobber the workspace here
-	LD	HL,WORKSP
-	LD	DE,WORKSP+1
-	LD	BC,245
-	LD	(HL),SPACE
-	LDIR		; prefill the workspace with spaces
+	CALL	CLRWSP
 	SUB	11H
 	JP	Z,MOVD	; 11h = down (too far for JR)
 	CP	3
@@ -182,7 +185,7 @@ POLL:	LD	HL,POLL
 MOVU:	LD	A,(IX+1)
 	OR	(IX+2)
 	RET	NZ	; blocked by wall
-	CALL	DRAWV
+	CALL	DRAWY
 	CALL	DUMPYV
 	LD	A,WALLA
 	CALL	DUMPYS
@@ -207,7 +210,7 @@ MOVY:	LD	A,(HL)
 MOVL:	LD	A,(IX+40)
 	OR	(IX+80)
 	RET	NZ	; blocked by wall
-	CALL	DRAWH
+	CALL	DRAWX
 	CALL	DUMPXV
 	LD	A,WALLL
 	CALL	DUMPXS
@@ -243,7 +246,7 @@ MOVR:	LD	A,(IX+43)
 	LD	HL,XCURR
 	INC	(HL)
 	CALL	MOVX
-	CALL	DRAWH
+	CALL	DRAWX
 	CALL	DUMPXV
 	LD	A,WALLR
 	; fall through to DUMPXS
@@ -263,30 +266,34 @@ DUMPX:	LD	HL,(XCURR)
 	INC	C		; C := 5, and still NZ
 DUMPX1:	LD	HL,CODEX
 	ADD	HL,BC
-	LD	DE,DUMPX5
+	LD	DE,DUMPX6
 	LD	C,7
 	LDIR			; self-modifying code
 	LD	DE,VRAM
-	LD	HL,WORKSP
+	LD	HL,WORKSP+16
 	JR	Z,DUMPX2	; ZF still from BIT 2,C
 	INC	HL
-DUMPX2:	LD	C,16		; B is already 0
+DUMPX2:	OR	A
+	JR	NZ,DUMPX3
+	LD	C,19		; B is already 0
+	ADD	HL,BC
+DUMPX3:	LD	C,16		; B is already 0
 	SUB	1
-	JR	C,DUMPX3
-	JR	Z,DUMPX4
+	JR	C,DUMPX4
+	JR	Z,DUMPX5
 	SBC	HL,BC		; beforehand, CF is cleared
-	JR	DUMPX5
-DUMPX3:	LD	A,4
-DUMPX4:	INC	HL
+	JR	DUMPX6
+DUMPX4:	LD	A,4
+DUMPX5:	INC	HL
 	INC	HL
 	INC	HL
-DUMPX5:	DEFS	+7		; code copied here from CODEX
-	JP	PE,DUMPX5	; inner loop: 8*60 cycles
+DUMPX6:	DEFS	+7		; code copied here from CODEX
+	JP	PE,DUMPX6	; inner loop: 8*60 cycles
 	LD	C,A
 	LD	A,E
 	CP	0E8H		; 03E8H = 1000
 	LD	A,C
-	JR	NZ,DUMPX2	; outer loop
+	JR	NZ,DUMPX3	; outer loop
 	RET
 
 ; MOVD - player moves down (walls move up)
@@ -297,7 +304,7 @@ MOVD:	LD	A,(IX+121)
 	LD	HL,YCURR
 	DEC	(HL)
 	CALL	MOVY
-	CALL	DRAWV
+	CALL	DRAWY
 	CALL	DUMPYV
 	LD	A,WALLB
 	; fall through to DUMPYS
@@ -305,71 +312,73 @@ MOVD:	LD	A,(IX+121)
 ; DUMPY - render walls after vertical movement
 ; DUMPYV - VBLANK + DUMPY
 ; DUMPYS - SNR2 + VBLANK + DUMPY
-; Always exits with B=0
+; Must be called with B=0; always exits with B=0
 
 DUMPYS:	CALL	SNR2
 DUMPYV:	CALL	VBLANK
-DUMPY:	LD	HL,CODEY
-	LD	A,(XCURR)
-	LD	B,A
-	OR	A
-	JR	Z,DUMPY2
-	LD	C,255		; anything big will do
-	LD	A,0B0H		; search past LDIR
-DUMPY1:	CPIR			; will not affect B
-	DJNZ	DUMPY1		; 237 cycles (worst case, (XCURR)=4)
-DUMPY2:	LD	C,11		; B is already 0
-	LD	DE,DUMPY8
+DUMPY:	LD	A,(XCURR)
+	LD	C,A
+	ADD	A,A
+	CP	8
+	ADC	A,C
+	LD	C,A
+	LD	HL,CODEY-1
+	ADD	HL,BC		; HL=CODEY+0/3/6/9/11 for (XCURR)=0/1/2/3/4
+	LD	DE,DUMPY5
+	LD	C,11		; B is already 0
 	LDIR			; self-modifying code
 	LD	HL,(XCURR)
 	XOR	A
 	CP	H
-	JR	NZ,DUMPY3	; if (YCURR)=0, C=0 (from LDIR)
+	JR	NZ,DUMPY1	; if (YCURR)=0, C=0 (from LDIR)
 	LD	C,19		; if (YCURR)<>0, C=19
-DUMPY3:	CP	L
-	JR	NZ,DUMPY4
+DUMPY1:	CP	L
+	JR	NZ,DUMPY2
 	INC	C		; if (XCURR)=0, increment C
-DUMPY4:	LD	A,H		; A:=(YCURR)
-	LD	HL,WORKSP+19
+DUMPY2:	LD	A,H		; A:=(YCURR)
+	LD	HL,WORKSP+19	; first cornerstone (B1)
 	ADD	HL,BC
 	LD	DE,VRAM
-DUMPY5:	LD	C,40		; width of screen
+DUMPY3:	LD	C,40		; width of screen
 	SUB	1
-	JR	C,DUMPY6
-	JR	Z,DUMPY7
+	JR	C,DUMPY4
+	JR	Z,DUMPY5
 	EX	DE,HL
 	ADD	HL,BC
 	EX	DE,HL
-	JR	DUMPY9
-DUMPY6:	LD	A,4
-DUMPY7:	LDI
-DUMPY8:	DEFS	+11		; code will be copied here from CODEY
-	JP	PE,DUMPY7	; inner loop: 8*108 cycles
-DUMPY9:	LD	C,A
+	JR	DUMPY6
+DUMPY4:	LD	A,4
+DUMPY5:	DEFS	+11		; code will be copied here from CODEY
+	LDI
+	JP	PE,DUMPY5	; inner loop: 8*108 cycles
+	INC	HL
+	INC	HL
+	INC	HL
+DUMPY6:	LD	C,A
 	LD	A,E
 	CP	0E8H
 	LD	A,C
-	JR	NZ,DUMPY5
+	JR	NZ,DUMPY3
 	RET
 
-; DRAWH - draw walls, misaligned horizontally
+; DRAWX - draw walls, misaligned horizontally
 
-DRAWH:	CALCH	WALL SPACE
+DRAWX:	CALCH	WALL SPACE
 	CALCV	WALLR WALLL
-	CALCC	WALLR WALLL (IX-1) (IX+1) (IX-19) (IX+19)
+	CALCC	WALLR WALLL 1 19
 	RET
 
-; DRAWV - draw walls, misaligned vertically
+; DRAWY - draw walls, misaligned vertically
 
-DRAWV:	CALCH	WALLB WALLA
+DRAWY:	CALCH	WALLB WALLA
 	CALCV	WALL SPACE
-	CALCC	WALLB WALLA (IX-19) (IX+19) (IX-1) (IX+1)
+	CALCC	WALLB WALLA 19 1
 	RET
 
 ; SNR2 - search and replace two display codes in workspace
 ; in: A = display code that needs to be replaced by WALL
 ;         (A xor 40H is the second display code; will be replaced by SPACE)
-;     B = 0
+; Must be called with B=0; always exits with B=0
 ; Clobbers AF, C, E, HL
 ; 17555 cycles (worst case, walls everywhere)
 
@@ -385,6 +394,16 @@ SNR1:	CPIR
 	LD	(HL),E
 	INC	HL
 	JP	PE,SNR1
+	RET
+
+; CLRWSP - fill entire workspace with SPACE
+; Clobbers F, BC, DE, HL
+
+CLRWSP:	LD	HL,WORKSP
+	LD	DE,WORKSP+1
+	LD	BC,245
+	LD	(HL),SPACE
+	LDIR
 	RET
 
 ; ---------------------------------
@@ -411,14 +430,15 @@ CODEY:	DEC	HL	; first instruction when (XCURR)=0
 	LDI
 	DEC	HL	; first instruction when (XCURR)=1
 	LDI
-	LDI		; first instruction when (XCURR)=2
+	DEC	HL	; first instruction when (XCURR)=2
+	LDI
 	LDI		; first instruction when (XCURR)=3
-	DEC	HL	; first instruction when (XCURR)=4
-	LDI
+	LDI		; first instruction when (XCURR)=4
 	DEC	HL
 	LDI
 	DEC	HL
 	LDI
+	DEC	HL
 	LDI
 
 ; ---------------------------------
@@ -435,7 +455,7 @@ CODEY:	DEC	HL	; first instruction when (XCURR)=0
 
 XCURR:	DEFB	1
 
-; YCURR - current X position, sub-cell
+; YCURR - current Y position, sub-cell
 ;
 ;  0   1   2   3   4
 ;  |  -+-  |   |   |
@@ -449,9 +469,9 @@ XCURR:	DEFB	1
 ;  |   |   |   |  -+-
 ; -+-  |   |   |   |
 ;  |  -+-  |   |   |
-; PL   |  -+-  |   |
-; PL   |   |  -+-  |
-;  |   |   |   |  -+-
+;  |   |  -+-  |   |
+;  |   PL  |  -+-  |
+;  |   PL  |   |  -+-
 ; -+-  |   |   |   |
 ;  |  -+-  |   |   |
 ;  |   |  -+-  |   |
@@ -464,7 +484,7 @@ XCURR:	DEFB	1
 ;  |   |   |   |  -+-
 ; -+-  |   |   |   |
 
-YCURR:	DEFB	0
+YCURR:	DEFB	1
 
 ; HCURR - current position, hashed for horizontal walls
 
