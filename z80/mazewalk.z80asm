@@ -5,11 +5,11 @@
 ; MZ-700 memory map
 VRAM:	EQU	0D000H	; video RAM (40x25 character matrix)
 SPACE:	EQU	00H	; display code: space
-WALL:	EQU	43H	; display code: whole wall character
-WALLA:	EQU	3AH	; display code: half horizontal above
-WALLB:	EQU	7AH	; display code: half horizontal below
-WALLL:	EQU	3BH	; display code: half vertical left
-WALLR:	EQU	7BH	; display code: half vertical right
+WALL:	EQU	43H	; display code: whole wall
+WALLA:	EQU	7AH	; display code: upper half of wall
+WALLB:	EQU	3AH	; display code: lower half of wall
+WALLL:	EQU	7BH	; display code: left half of wall
+WALLR:	EQU	3BH	; display code: right half of wall
 
 ; MZ-700 system calls
 GETKEY:	EQU	001BH	; poll keyboard (11H-14H = down/up/right/left)
@@ -52,14 +52,42 @@ HASHI:	MACRO
 	ADD	HL,DE
 	ENDM
 
+; CALCV - calculate all vertical walls, store them in workspace
+; Clobbers AF, BC, DE, HL, IY
+; 42 or 46 bytes; 5642 or 6839 cycles (worst case)
+
+CALCV:	MACRO	CHAR1 CHAR2
+	LD	DE,VRIGHT
+	LD	HL,(VCURR)
+	LD	IY,WORKSP
+.OUTER:	LD	B,9
+.INNER:	HASHI
+	JP	PE,.SKIP
+	LD	(IY+0),CHAR1
+	IF	CHAR2!=SPACE
+	LD	(IY+1),CHAR2
+	ENDIF
+.SKIP:	INC	IY
+	INC	IY
+	DJNZ	.INNER	; 724 or 895 cycles
+	LD	C,20	; B is already zero
+	ADD	IY,BC
+	LD	BC,VDOWN-9*VRIGHT
+	ADD	HL,BC
+	LDAIYL
+	CP	(WORKSP+14*19)&0FFH	; repeat 7 times
+	JR	NZ,.OUTER
+	ENDM
+
 ; CALCH - calculate all horizontal walls, store them in workspace
+; out: IY = WORKSP+13*19-1
 ; Clobbers AF, BC, DE, HL, IY
 ; 42 or 46 bytes; 5327 or 6467 cycles (worst case)
 
 CALCH:	MACRO	CHAR1 CHAR2
 	LD	DE,HRIGHT
 	LD	HL,(HCURR)
-	LD	IY,WORKSP+18
+	LD	IY,WORKSP+18	; first horizontal wall (B0)
 .OUTER:	LD	B,10
 .INNER:	HASHI
 	JP	PE,.SKIP
@@ -79,42 +107,17 @@ CALCH:	MACRO	CHAR1 CHAR2
 	JR	NZ,.OUTER
 	ENDM
 
-; CALCV - calculate all vertical walls, store them in workspace
-; Clobbers AF, BC, DE, HL, IY
-; 42 or 46 bytes; 5642 or 6839 cycles (worst case)
-
-CALCV:	MACRO	CHAR1 CHAR2
-	LD	DE,VRIGHT
-	LD	HL,(VCURR)
-	LD	IY,WORKSP
-.OUTER:	LD	B,9
-.INNER:	HASHI
-	JP	PE,.SKIP
-	LD	(IY+0),CHAR1
-	IF	CHAR2!=0
-	LD	(IY+1),CHAR2
-	ENDIF
-.SKIP:	INC	IY
-	INC	IY
-	DJNZ	.INNER	; 724 or 895 cycles
-	LD	C,20	; B is already zero
-	ADD	IY,BC
-	LD	BC,VDOWN-9*VRIGHT
-	ADD	HL,BC
-	LDAIYL
-	CP	(WORKSP+14*19)&0FFH	; repeat 7 times
-	JR	NZ,.OUTER
-	ENDM
-
 ; CALCC - calculate all corner stones, store them in workspace
+; in: IY = WORKSP+13*19-1
 ; Clobbers AF, BC, DE, HL, IY
 ; Always exits with B=0
 ; 54 bytes; 10845 cycles (worst case)
 
 CALCC:	MACRO	CHAR1 CHAR2 D1 D2
-	LD	IY,WORKSP+18
-.OUTER:	LD	B,9
-.INNER:	INC	IY
+.OUTER:	LD	BC,-20
+	ADD	IY,BC
+	LD	B,9
+.INNER:	DEC	IY
 	LD	E,(IY-D1)
 	LD	D,(IY+D1)
 	LD	A,E
@@ -135,12 +138,10 @@ CALCC:	MACRO	CHAR1 CHAR2 D1 D2
 	IF	D1=19		; workaround for z80asm bug
 	LD	(IY+19),CHAR2
 	ENDIF
-.SKIP2:	INC	IY
+.SKIP2:	DEC	IY
 	DJNZ	.INNER
-	LD	C,20		; B is already zero
-	ADD	IY,BC
 	LDAIYL
-	CP	(WORKSP+13*19-1)&0FFH	; repeat 6 times
+	CP	(WORKSP+18)&0FFH	; repeat 6 times
 	JR	NZ,.OUTER
 	ENDM
 
@@ -152,25 +153,18 @@ CALCC:	MACRO	CHAR1 CHAR2 D1 D2
 
 START:	LD	A,CLS
 	CALL	DPCT
-	CALL	CLRWSP
+	LD	IX,VRAM+458	; center of screen
 	CALL	DRAWX
 	LD	A,WALLR
 	CALL	SNR2
 	CALL	DUMPX
-	CALL	CLRWSP
 	CALL	DRAWY
 	LD	A,WALLB
 	CALL	SNR2
 	CALL	DUMPY
-	LD	IX,VRAM+458	; center of screen
-	LD	(IX+41),0FEH
-	LD	(IX+42),0FDH
-	LD	(IX+81),0FBH
-	LD	(IX+82),0F7H
-POLL:	LD	HL,POLL
+POLL:	CALL	GETKEY	; it's OK for the stack to clobber the workspace here
+	LD	HL,POLL
 	PUSH	HL	; push return address (main loop)
-	CALL	GETKEY	; it's OK for the stack to clobber the workspace here
-	CALL	CLRWSP
 	SUB	11H
 	JP	Z,MOVD	; 11h = down (too far for JR)
 	CP	3
@@ -294,7 +288,7 @@ DUMPX6:	DEFS	+7		; code copied here from CODEX
 	CP	0E8H		; 03E8H = 1000
 	LD	A,C
 	JR	NZ,DUMPX3	; outer loop
-	RET
+	JR	DUMPPL
 
 ; MOVD - player moves down (walls move up)
 
@@ -328,18 +322,17 @@ DUMPY:	LD	A,(XCURR)
 	LD	C,11		; B is already 0
 	LDIR			; self-modifying code
 	LD	HL,(XCURR)
-	XOR	A
-	CP	H
-	JR	NZ,DUMPY1	; if (YCURR)=0, C=0 (from LDIR)
-	LD	C,19		; if (YCURR)<>0, C=19
-DUMPY1:	CP	L
-	JR	NZ,DUMPY2
-	INC	C		; if (XCURR)=0, increment C
-DUMPY2:	LD	A,H		; A:=(YCURR)
-	LD	HL,WORKSP+19	; first cornerstone (B1)
+	LD	A,H		; A:=(YCURR)
+	OR	A
+	JR	NZ,DUMPY1	; if (YCURR)!=0, BC=0 (as per LDIR)
+	LD	C,19		; if (YCURR)==0, BC=19 (B is already 0)
+DUMPY1:	BIT	2,L
+	JR	Z,DUMPY2
+	INC	C		; if (XCURR)==4, increment BC
+DUMPY2:	LD	HL,WORKSP+19	; first cornerstone (B1)
 	ADD	HL,BC
 	LD	DE,VRAM
-DUMPY3:	LD	C,40		; width of screen
+DUMPY3:	LD	C,40		; width of screen (B is already 0)
 	SUB	1
 	JR	C,DUMPY4
 	JR	Z,DUMPY5
@@ -354,24 +347,33 @@ DUMPY5:	DEFS	+11		; code will be copied here from CODEY
 	INC	HL
 	INC	HL
 	INC	HL
-DUMPY6:	LD	C,A
+DUMPY6:	LD	C,A		; save A
 	LD	A,E
 	CP	0E8H
-	LD	A,C
+	LD	A,C		; restore A
 	JR	NZ,DUMPY3
+DUMPPL:	LD	(IX+41),0FEH	; display player
+	LD	(IX+42),0FDH
+	LD	(IX+81),0FBH
+	LD	(IX+82),0F7H
 	RET
 
 ; DRAWX - draw walls, misaligned horizontally
 
-DRAWX:	CALCH	WALL SPACE
+DRAWX:	LD	HL,WORKSP
+	LD	DE,WORKSP+1
+	LD	BC,245
+	LD	(HL),SPACE
+	LDIR			; clear workspace
 	CALCV	WALLR WALLL
+	CALCH	WALL SPACE
 	CALCC	WALLR WALLL 1 19
 	RET
 
 ; DRAWY - draw walls, misaligned vertically
 
-DRAWY:	CALCH	WALLB WALLA
-	CALCV	WALL SPACE
+DRAWY:	CALCV	WALL SPACE
+	CALCH	WALLB WALLA
 	CALCC	WALLB WALLA 19 1
 	RET
 
@@ -394,16 +396,6 @@ SNR1:	CPIR
 	LD	(HL),E
 	INC	HL
 	JP	PE,SNR1
-	RET
-
-; CLRWSP - fill entire workspace with SPACE
-; Clobbers F, BC, DE, HL
-
-CLRWSP:	LD	HL,WORKSP
-	LD	DE,WORKSP+1
-	LD	BC,245
-	LD	(HL),SPACE
-	LDIR
 	RET
 
 ; ---------------------------------
