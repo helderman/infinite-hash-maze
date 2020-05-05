@@ -5,7 +5,7 @@ all: \
 # GNU Make automatically recognizes %.bin and %.raw as intermediate files,
 # but not %.lbl. Giving a small hint here.
 .INTERMEDIATE: \
-	mazegame.lbl mazeview.lbl testtape.lbl
+	mazegame.lbl mazeview.lbl mazewalk.lbl testtape.lbl
 
 %.wav: %.raw
 	./raw2wav.sh $< $@

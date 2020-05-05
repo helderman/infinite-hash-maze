@@ -29,6 +29,10 @@ VRIGHT:	EQU	1409
 VDOWN:	EQU	-397
 VUP:	EQU	397
 
+; Initial position in maze
+POSX:	EQU	33322
+POSY:	EQU	35273
+
 ; ---------------------------------
 ; Macros
 ; ---------------------------------
@@ -57,9 +61,7 @@ HASHI:	MACRO
 ; 42 or 46 bytes; 5642 or 6839 cycles (worst case)
 
 CALCV:	MACRO	CHAR1 CHAR2
-	LD	DE,VRIGHT
-	LD	HL,(VCURR)
-	LD	IY,WORKSP
+	CALL	INITV
 .OUTER:	LD	B,9
 .INNER:	HASHI
 	JP	PE,.SKIP
@@ -72,22 +74,20 @@ CALCV:	MACRO	CHAR1 CHAR2
 	DJNZ	.INNER	; 724 or 895 cycles
 	LD	C,20	; B is already zero
 	ADD	IY,BC
-	LD	BC,VDOWN-9*VRIGHT
+	LD	BC,VDOWN-9*VRIGHT	; next row of vertical walls
 	ADD	HL,BC
 	LDAIYL
-	CP	(WORKSP+14*19)&0FFH	; repeat 7 times
+	CP	WORKSP+14*19 & 0FFH	; repeat 7 times
 	JR	NZ,.OUTER
 	ENDM
 
 ; CALCH - calculate all horizontal walls, store them in workspace
-; out: IY = WORKSP+13*19-1
+; Always exits with IY = WORKSP+13*19-1 (as input for CALCC)
 ; Clobbers AF, BC, DE, HL, IY
 ; 42 or 46 bytes; 5327 or 6467 cycles (worst case)
 
 CALCH:	MACRO	CHAR1 CHAR2
-	LD	DE,HRIGHT
-	LD	HL,(HCURR)
-	LD	IY,WORKSP+18	; first horizontal wall (B0)
+	CALL	INITH
 .OUTER:	LD	B,10
 .INNER:	HASHI
 	JP	PE,.SKIP
@@ -103,7 +103,7 @@ CALCH:	MACRO	CHAR1 CHAR2
 	LD	BC,HDOWN-10*HRIGHT
 	ADD	HL,BC
 	LDAIYL
-	CP	(WORKSP+13*19-1)&0FFH	; repeat 6 times
+	CP	WORKSP+13*19-1 & 0FFH	; repeat 6 times
 	JR	NZ,.OUTER
 	ENDM
 
@@ -141,7 +141,7 @@ CALCC:	MACRO	CHAR1 CHAR2 D1 D2
 .SKIP2:	DEC	IY
 	DJNZ	.INNER
 	LDAIYL
-	CP	(WORKSP+18)&0FFH	; repeat 6 times
+	CP	WORKSP+18 & 0FFH	; repeat 6 times
 	JR	NZ,.OUTER
 	ENDM
 
@@ -360,12 +360,7 @@ DUMPPL:	LD	(IX+41),0FEH	; display player
 
 ; DRAWX - draw walls, misaligned horizontally
 
-DRAWX:	LD	HL,WORKSP
-	LD	DE,WORKSP+1
-	LD	BC,245
-	LD	(HL),SPACE
-	LDIR			; clear workspace
-	CALCV	WALLR WALLL
+DRAWX:	CALCV	WALLR WALLL
 	CALCH	WALL SPACE
 	CALCC	WALLR WALLL 1 19
 	RET
@@ -396,6 +391,26 @@ SNR1:	CPIR
 	LD	(HL),E
 	INC	HL
 	JP	PE,SNR1
+	RET
+
+; INITV - initialization for CALCV
+
+INITV:	LD	HL,WORKSP
+	PUSH	HL
+	POP	IY		; IY := WORKSP
+	LD	DE,WORKSP+1
+	LD	BC,245
+	LD	(HL),SPACE
+	LDIR			; clear workspace
+	LD	DE,VRIGHT
+	LD	HL,(VCURR)
+	RET
+
+; INITH - initialization for CALCH
+
+INITH:	LD	DE,HRIGHT
+	LD	HL,(HCURR)
+	LD	IY,WORKSP+18	; first horizontal wall (B0)
 	RET
 
 ; ---------------------------------
@@ -480,11 +495,11 @@ YCURR:	DEFB	1
 
 ; HCURR - current position, hashed for horizontal walls
 
-HCURR:	DEFW	33322+4*HLEFT+2*HUP
+HCURR:	DEFW	HRIGHT*(POSX-4)+HUP*(POSY+3) & 0FFFFH
 
 ; VCURR - current position, hashed for vertical walls
 
-VCURR:	DEFW	35273+3*VLEFT+3*VUP
+VCURR:	DEFW	VRIGHT*(POSX-3)+VUP*(POSY+3) & 0FFFFH
 
 ; ---------------------------------
 ; Uninitialized variables
