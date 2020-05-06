@@ -38,6 +38,7 @@ POSY:	EQU	35273
 ; ---------------------------------
 
 ; LDAIYL - workaround for unrecognized LD A,IYL
+; 2 bytes; 8 cycles
 
 LDAIYL:	MACRO
 	DEFB	0FDH	; prefix for IY
@@ -58,7 +59,7 @@ HASHI:	MACRO
 
 ; CALCV - calculate all vertical walls, store them in workspace
 ; Clobbers AF, BC, DE, HL, IY
-; 42 or 46 bytes; 5642 or 6839 cycles (worst case)
+; 35 or 39 bytes; 10866 or 12063 cycles (worst case)
 
 CALCV:	MACRO	CHAR1 CHAR2
 	CALL	INITV
@@ -84,7 +85,7 @@ CALCV:	MACRO	CHAR1 CHAR2
 ; CALCH - calculate all horizontal walls, store them in workspace
 ; Always exits with IY = WORKSP+13*19-1 (as input for CALCC)
 ; Clobbers AF, BC, DE, HL, IY
-; 42 or 46 bytes; 5327 or 6467 cycles (worst case)
+; 35 or 39 bytes; 5354 or 6494 cycles (worst case)
 
 CALCH:	MACRO	CHAR1 CHAR2
 	CALL	INITH
@@ -111,7 +112,7 @@ CALCH:	MACRO	CHAR1 CHAR2
 ; in: IY = WORKSP+13*19-1
 ; Clobbers AF, BC, DE, HL, IY
 ; Always exits with B=0
-; 54 bytes; 10845 cycles (worst case)
+; 51 bytes; about 10831 cycles (worst case)
 
 CALCC:	MACRO	CHAR1 CHAR2 D1 D2
 .OUTER:	LD	BC,-20
@@ -249,6 +250,7 @@ MOVR:	LD	A,(IX+43)
 ; DUMPXV - VBLANK + DUMPX
 ; DUMPXS - SNR2 + VBLANK + DUMPX
 ; Must be called with B=0; always exits with B=0
+; 14576 or 14578 cycles (DUMPX alone)
 
 DUMPXS:	CALL	SNR2
 DUMPXV:	CALL	VBLANK
@@ -287,7 +289,7 @@ DUMPX6:	DEFS	+7		; code copied here from CODEX
 	LD	A,E
 	CP	0E8H		; 03E8H = 1000
 	LD	A,C
-	JR	NZ,DUMPX3	; outer loop
+	JR	NZ,DUMPX3	; outer loop: 10*562+15*572-5 cycles
 	JR	DUMPPL
 
 ; MOVD - player moves down (walls move up)
@@ -307,6 +309,7 @@ MOVD:	LD	A,(IX+121)
 ; DUMPYV - VBLANK + DUMPY
 ; DUMPYS - SNR2 + VBLANK + DUMPY
 ; Must be called with B=0; always exits with B=0
+; between 11367 and 11370 cycles (DUMPY alone)
 
 DUMPYS:	CALL	SNR2
 DUMPYV:	CALL	VBLANK
@@ -351,7 +354,7 @@ DUMPY6:	LD	C,A		; save A
 	LD	A,E
 	CP	0E8H
 	LD	A,C		; restore A
-	JR	NZ,DUMPY3
+	JR	NZ,DUMPY3	; outer loop: 10*946+15*96-5 cycles
 DUMPPL:	LD	(IX+41),0FEH	; display player
 	LD	(IX+42),0FDH
 	LD	(IX+81),0FBH
@@ -359,6 +362,7 @@ DUMPPL:	LD	(IX+41),0FEH	; display player
 	RET
 
 ; DRAWX - draw walls, misaligned horizontally
+; about 28309 cycles (worst case)
 
 DRAWX:	CALCV	WALLR WALLL
 	CALCH	WALL SPACE
@@ -366,6 +370,7 @@ DRAWX:	CALCV	WALLR WALLL
 	RET
 
 ; DRAWY - draw walls, misaligned vertically
+; about 28252 cycles (worst case)
 
 DRAWY:	CALCV	WALL SPACE
 	CALCH	WALLB WALLA
@@ -394,6 +399,7 @@ SNR1:	CPIR
 	RET
 
 ; INITV - initialization for CALCV
+; 5247 cycles
 
 INITV:	LD	HL,WORKSP
 	PUSH	HL
@@ -407,6 +413,7 @@ INITV:	LD	HL,WORKSP
 	RET
 
 ; INITH - initialization for CALCH
+; 50 cycles
 
 INITH:	LD	DE,HRIGHT
 	LD	HL,(HCURR)
@@ -418,20 +425,20 @@ INITH:	LD	DE,HRIGHT
 ; ---------------------------------
 
 ; CODEX - pick a subsequence of 5 instructions (7 bytes, 50 cycles)
-;         to fill a row of 5 characters in V-RAM
+;         to fill in the gap in the code of DUMPX
 
-CODEX:	INC	DE
-	INC	DE
-	INC	DE
-	LDI
-	LDI
+CODEX:	INC	DE	; first instruction when (XCURR)=0
+	INC	DE	; first instruction when (XCURR)=1
+	INC	DE	; first instruction when (XCURR)=2
+	LDI		; first instruction when (XCURR)=3
+	LDI		; first instruction when (XCURR)=4
 	INC	DE
 	INC	DE
 	INC	DE
 	LDI
 
 ; CODEY - pick a subsequence of 7 instructions (11 bytes, 82 cycles)
-;         to fill a row of 5 characters in V-RAM
+;         to fill in the gap in the code of DUMPY
 
 CODEY:	DEC	HL	; first instruction when (XCURR)=0
 	LDI
