@@ -2,8 +2,8 @@
 ; Infinite Hash Maze
 ; ---------------------------------
 
-; MZ-700 memory map
-VRAM:	EQU	0D000H	; video RAM (40x25 character matrix)
+; MZ-700 memory map: video RAM (40x25 character matrix)
+VRAM:	EQU	0D000H	; start address
 SPACE:	EQU	00H	; display code: space
 WALL:	EQU	43H	; display code: whole wall
 WALLA:	EQU	7AH	; display code: upper half of wall
@@ -11,8 +11,11 @@ WALLB:	EQU	3AH	; display code: lower half of wall
 WALLL:	EQU	7BH	; display code: left half of wall
 WALLR:	EQU	3BH	; display code: right half of wall
 
+; MZ-700 memory map: memory-mapped I/O (keyboard)
+PPI:	EQU	0E000H	; PPI 8255
+ARROWS:	EQU	0F7H	; PPI port A output for keyboard scanline #8
+
 ; MZ-700 system calls
-GETKEY:	EQU	001BH	; poll keyboard (11H-14H = down/up/right/left)
 VBLANK:	EQU	0DA6H	; wait until start of vertical blanking period
 DPCT:	EQU	0DDCH	; display control
 CLS:	EQU	0C6H	; display code to clear screen
@@ -163,17 +166,39 @@ START:	LD	A,CLS
 	LD	A,WALLB
 	CALL	SNR2
 	CALL	DUMPY
-POLL:	CALL	GETKEY	; it's OK for the stack to clobber the workspace here
-	LD	HL,POLL
-	PUSH	HL	; push return address (main loop)
-	SUB	11H
-	JP	Z,MOVD	; 11h = down (too far for JR)
-	CP	3
-	JR	Z,MOVL	; 14h = left
+POLL:	LD	HL,PPI
+	DI
+	LD	(HL),ARROWS
+	INC	L	; (need a tiny delay before fetching the keys)
+	LD	BC,POLL
+	PUSH	BC	; push return address (main loop)
+	LD	A,(HL)	; xxUDRLxx (binary)
+	EI
+	OR	0C3H	; neutralize non-arrow keys
+	LD	C,A
+	CPL		; now 1 = pressed, 0 = released
+	LD	B,A
+	LD	HL,KSTATE
+	AND	(HL)	; if new key pressed, use it
+	LD	(HL),C
+	INC	HL
+	JR	NZ,SWITCH
+	LD	A,B
+	AND	(HL)	; try the key that was used last time
+	JR	NZ,SWITCH
+	LD	A,B	; if that key was released, try another key
+SWITCH:	LD	(HL),A
+	RRCA
+	RRCA
+	RRCA
+	JR	C,MOVL	; left arrow key
+	RRCA
+	JR	C,MOVR	; right arrow key
+	RRCA
+	JP	C,MOVD	; down arrow key (too far for JR)
+	RRCA
 	RET	NC
-	DEC	A
-	JR	NZ,MOVR	; 13h = right
-	; fall through to MOVU; 12h = up
+	; fall through to MOVU; up arrow key
 
 ; MOVU - player moves up (walls move down)
 
@@ -234,11 +259,12 @@ MOVXY:	LD	(HL),A
 	RET
 
 ; MOVR - player moves right (walls move left)
+; Must be called with HL = XCURR-1
 
 MOVR:	LD	A,(IX+43)
 	OR	(IX+83)
 	RET	NZ	; blocked by wall
-	LD	HL,XCURR
+	INC	HL	; HL := XCURR
 	INC	(HL)
 	CALL	MOVX
 	CALL	DRAWX
@@ -293,11 +319,13 @@ DUMPX6:	DEFS	+7		; code copied here from CODEX
 	JR	DUMPPL
 
 ; MOVD - player moves down (walls move up)
+; Must be called with HL = YCURR-2
 
 MOVD:	LD	A,(IX+121)
 	OR	(IX+122)
 	RET	NZ	; blocked by wall
-	LD	HL,YCURR
+	INC	HL
+	INC	HL	; HL := YCURR
 	DEC	(HL)
 	CALL	MOVY
 	CALL	DRAWY
@@ -458,6 +486,12 @@ CODEY:	DEC	HL	; first instruction when (XCURR)=0
 ; ---------------------------------
 ; Initialized variables
 ; ---------------------------------
+
+; KSTATE - keyboard status
+; bits 5/4/3/2 are arrow keys up/down/right/left
+
+KSTATE:	DEFB	0FFH	; keyboard state, last time (0 = pressed)
+	DEFB	0	; key that took effect last time (1 = pressed)
 
 ; XCURR - current X position, sub-cell
 ;
