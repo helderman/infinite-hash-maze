@@ -1,11 +1,11 @@
 all: \
-	mazegame.mzt mazeview.mzt mazewalk.mzt testtape.mzt \
-	mazegame.wav mazeview.wav mazewalk.wav testtape.wav
+	mazegame.mzt mazeview.mzt mazewalk.mzt smooth.mzt testtape.mzt \
+	mazegame.wav mazeview.wav mazewalk.wav smooth.wav testtape.wav
 
 # GNU Make automatically recognizes %.bin and %.raw as intermediate files,
 # but not %.lbl. Giving a small hint here.
 .INTERMEDIATE: \
-	mazegame.lbl mazeview.lbl mazewalk.lbl testtape.lbl
+	mazegame.lbl mazeview.lbl mazewalk.lbl smooth.lbl testtape.lbl
 
 %.wav: %.raw
 	./raw2wav.sh $< $@

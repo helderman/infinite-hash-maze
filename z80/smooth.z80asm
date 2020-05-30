@@ -1,0 +1,1104 @@
+; ------------------------------------------------------------
+; Smooth Scrolling Hash Maze for Sharp MZ-700
+;
+; Maze scrolls at 2 pixels per frame (or 4 when holding shift)
+; at 50 fps, without flicker.
+; Maze has no border, but repeats itself every 65536 cells
+; in either direction.
+; ------------------------------------------------------------
+
+; MZ-700 timing (according to service manual):
+; CPU clock 3.546875 MHz
+; VBLANK period: 19.985 - 12.8112 = 7.1738 ms = 25444 clock cycles
+; HBLANK period: 64.05603 - 36.088 = 27.96803 us = 99 clock cycles
+
+; MZ-700 memory map: video RAM (40x25 character matrix)
+VRAM:	EQU	0D000H	; start address (characters)
+VRAMC:	EQU	0D800H	; start address (colors)
+COLS:	EQU	40	; screen width (number of columns)
+ROWS:	EQU	25	; screen height (number of rows)
+SPACE:	EQU	00H	; character code: space
+WALL:	EQU	0F0H	; character code: alternate space (wall)
+LEFT2:	EQU	37H	; character code: left 2 pixels set
+RIGHT4:	EQU	3BH	; character code: right 4 pixels set
+RIGHT2:	EQU	3FH	; character code: right 2 pixels set
+UPPER2:	EQU	36H	; character code: upper 2 pixels set
+LOWER4:	EQU	3AH	; character code: lower 4 pixels set
+LOWER2:	EQU	3EH	; character code: lower 2 pixels set
+MCOLOR:	EQU	40H	; color code: maze
+ICOLOR:	EQU	04H	; color code: maze, inverted
+
+; 4K CGROM
+PL1:	EQU	0EAH	; character code: player, top left
+PL2:	EQU	0EBH	; character code: player, top right
+PL3:	EQU	0ECH	; character code: player, bottom left
+PL4:	EQU	0EDH	; character code: player, bottom right
+PCOLOR:	EQU	0D0H	; color code: player
+
+; 2K CGROM
+;PL1:	EQU	0FEH	; character code: player, top left
+;PL2:	EQU	0FDH	; character code: player, top right
+;PL3:	EQU	0FBH	; character code: player, bottom left
+;PL4:	EQU	0F7H	; character code: player, bottom right
+;PCOLOR:	EQU	50H	; color code: player
+
+; MZ-700 memory map: memory-mapped I/O (keyboard)
+PPI:	EQU	0E000H	; PPI 8255
+ARROWS:	EQU	0F7H	; PPI port A output for keyboard scanline #8
+SHBRK:	EQU	0F8H	; PPI port A output for keyboard scanline #9
+
+; MZ-700 system calls
+EXIT:	EQU	00ADH	; return to monitor 1Z-013A
+VBLANK:	EQU	0DA6H	; wait until start of vertical blanking period
+
+; Hash steps for horizontal walls
+HLEFT:	EQU	-563
+HRIGHT:	EQU	563
+HDOWN:	EQU	-761
+HUP:	EQU	761
+
+; Hash steps for vertical walls
+VLEFT:	EQU	-1409
+VRIGHT:	EQU	1409
+VDOWN:	EQU	-397
+VUP:	EQU	397
+
+; Initial position in maze
+POSX:	EQU	33322
+POSY:	EQU	35273
+
+; ---------------------------------
+; Macros
+; ---------------------------------
+
+; HASHI - hash and increment
+; in:     BC = post-increment for seed
+; in/out: HL = seed
+; out:    PO = wall, PE = no wall
+; registers clobbered: AF, HL
+; 3 bytes; 19 cycles
+
+HASHI:	MACRO
+	LD	A,L
+	XOR	H
+	ADD	HL,BC
+	ENDM
+
+; PAINT - fully paint maze on screen (only at the start)
+
+PAINT:	MACRO
+	LD	BC,5*HDOWN
+	LD	DE,5*VDOWN
+	CALL	MOVHV
+	LD	DE,VRAMC+COLS*ROWS
+.OUTER:	PUSH	DE
+	CALL	CLRWS
+	LD	HL,YCURR
+	INC	(HL)
+	CALL	MOVY
+	CALL	EDGEU
+	POP	DE
+	LD	HL,WORKSP+COLS+5
+	LD	B,COLS
+	CALL	VBLANK
+.INNER:	DEC	DE
+	DEC	HL
+	LD	A,(DE)
+	SET	2,D
+	LD	(DE),A
+	RES	2,D
+	RES	3,D
+	LD	A,(DE)
+	SET	2,D
+	LD	(DE),A
+	RES	2,D
+	LD	A,(HL)
+	LD	(DE),A
+	RLCA
+	SBC	A,A
+	AND	MCOLOR^ICOLOR
+	XOR	MCOLOR
+	SET	3,D
+	LD	(DE),A
+	DJNZ	.INNER
+	LD	A,E
+	OR	A
+	JR	NZ,.OUTER
+	LD	IX,VRAMC+458	; center of screen
+	LD	A,PCOLOR
+	CALL	CLRPL1
+	LD	IX,VRAM+458	; center of screen
+	ENDM
+
+; UNDO - restore original video RAM contents
+
+UNDO:	MACRO
+	LD	DE,VRAMC
+	LD	C,ROWS
+.OUTER:	LD	B,COLS
+	CALL	VBLANK
+.INNER:	SET	2,D
+	LD	A,(DE)
+	RES	2,D
+	LD	(DE),A
+	RES	3,D
+	SET	2,D
+	LD	A,(DE)
+	RES	2,D
+	LD	(DE),A
+	SET	3,D
+	INC	DE
+	DJNZ	.INNER
+	DEC	C
+	JR	NZ,.OUTER
+	ENDM
+
+; SCROLH - scroll horizontally
+; in:     HL = video RAM address (characters)
+;         C  = new character code
+; in/out: A  = neighboring old character code
+; registers clobbered: AF
+; 5 bytes; 19 or 28 cycles
+
+SCROLH:	MACRO
+	CP	(HL)
+	JR	Z,.SKIP
+	LD	A,(HL)
+	LD	(HL),C
+.SKIP:	ENDM
+
+; SCROLV - scroll vertically
+; in: HL = video RAM address (characters)
+;     DE = comparison address (video RAM or workspace)
+;     C  = new character code
+; registers clobbered: AF
+; 5 bytes; 26 or 28 cycles
+
+SCROLV:	MACRO
+	LD	A,(DE)
+	CP	(HL)
+	JR	Z,.SKIP
+	LD	(HL),C
+.SKIP:	ENDM
+
+; REPLD - replace character only (D)
+; in: HL = video RAM address (characters)
+;     A  = old character code
+;     D  = new character code
+; registers clobbered: F
+; 4 bytes; 19 or 21 cycles
+
+REPLD:	MACRO
+	CP	(HL)
+	JR	NZ,.SKIP
+	LD	(HL),D
+.SKIP:	ENDM
+
+; REPLE - replace character only (E)
+; in: HL = video RAM address (characters)
+;     A  = old character code
+;     E  = new character code
+; registers clobbered: F
+; 4 bytes; 19 or 21 cycles
+
+REPLE:	MACRO
+	CP	(HL)
+	JR	NZ,.SKIP
+	LD	(HL),E
+.SKIP:	ENDM
+
+; REPLCD - replace character and color (C and D)
+; in: HL = video RAM address (characters)
+;     A  = old character code
+;     C  = new character code
+;     D  = new color code
+; registers clobbered: F
+; 9 bytes; 19 or 44 cycles
+
+REPLCD:	MACRO
+	CP	(HL)
+	JR	NZ,.SKIP
+	LD	(HL),C
+	SET	3,H
+	LD	(HL),D
+	RES	3,H
+.SKIP:	ENDM
+
+; REPLCE - replace character and color (C and E)
+; in: HL = video RAM address (characters)
+;     A  = old character code
+;     C  = new character code
+;     E  = new color code
+; registers clobbered: F
+; 9 bytes; 19 or 44 cycles
+
+REPLCE:	MACRO
+	CP	(HL)
+	JR	NZ,.SKIP
+	LD	(HL),C
+	SET	3,H
+	LD	(HL),E
+	RES	3,H
+.SKIP:	ENDM
+
+; REROD - replace characters, entire row
+; in/out: HL = video RAM address (characters)
+; in:     A  = old character code
+;         D  = new character code
+; registers clobbered: F, B, HL
+; 14 bytes, 1222~1302 cycles
+
+REROD:	MACRO
+	LD	B,COLS/2
+.LOOP:	REPLD
+	INC	L
+	REPLD
+	INC	HL
+	DJNZ	.LOOP
+	ENDM
+
+; REROE - replace characters, entire row
+; in/out: HL = video RAM address (characters)
+; in:     A  = old character code
+;         E  = new character code
+; registers clobbered: F, B, HL
+; 14 bytes, 1222~1302 cycles
+
+REROE:	MACRO
+	LD	B,COLS/2
+.LOOP:	REPLE
+	INC	L
+	REPLE
+	INC	HL
+	DJNZ	.LOOP
+	ENDM
+
+; REROCD - replace characters and colors, entire row
+; in/out: HL = video RAM address (characters)
+; in:     A  = old character code
+;         C  = new character code
+;         D  = new color code
+; registers clobbered: F, B, HL
+; 24 bytes, 1222~2222 cycles
+
+REROCD:	MACRO
+	LD	B,COLS/2
+.LOOP:	REPLCD
+	INC	L
+	REPLCD
+	INC	HL
+	DJNZ	.LOOP
+	ENDM
+
+; REROCE - replace characters and colors, entire row
+; in/out: HL = video RAM address (characters)
+; in:     A  = old character code
+;         C  = new character code
+;         E  = new color code
+; registers clobbered: F, B, HL
+; 24 bytes, 1222~2222 cycles
+
+REROCE:	MACRO
+	LD	B,COLS/2
+.LOOP:	REPLCE
+	INC	L
+	REPLCE
+	INC	HL
+	DJNZ	.LOOP
+	ENDM
+
+; SCR0R - scroll maze to the right (player moving left)
+; registers clobbered: AF, BC, DE, HL; makes C=LEFT2
+
+SCR0R:	MACRO
+	LD	C,LEFT2
+	LD	DE,WORKSP+5
+	LD	HL,VRAM
+	CALL	VBLANK
+	CALL	CLRPL
+	LD	A,(XCURR)
+	OR	A		; if (XCURR)=0
+	JR	Z,.L3
+	CPL
+	ADD	A,5
+	LD	L,A		; HL=VRAM+4-(XCURR)
+.L1:	LD	A,(DE)
+	INC	DE
+	LD	B,8
+.L2:	SCROLH
+	INC	HL
+	SCROLH
+	INC	HL
+	INC	HL
+	INC	HL
+	INC	HL
+	DJNZ	.L2		; loop: 81-99 cycles per iteration
+	LD	A,E
+	CP	WORKSP+ROWS+5 & 0FFH
+	JR	NZ,.L1
+	JR	.L5
+.L3:	LD	A,(DE)
+	INC	DE
+	LD	B,8
+.L4:	SCROLH
+	INC	HL
+	INC	HL
+	INC	HL
+	INC	HL
+	SCROLH
+	INC	HL
+	DJNZ	.L4		; loop: 81-99 cycles per iteration
+	LD	A,E
+	CP	WORKSP+ROWS+5 & 0FFH
+	JR	NZ,.L3
+.L5:	CALL	DRAWPL
+	ENDM
+
+; SCR0L - scroll maze to the left (player moving right)
+; registers clobbered: AF, BC, DE, HL; makes C=RIGHT2
+
+SCR0L:	MACRO
+	LD	C,RIGHT2
+	LD	DE,WORKSP+ROWS+5
+	LD	HL,VRAM+COLS*ROWS
+	CALL	VBLANK
+	CALL	CLRPL
+	LD	A,(XCURR)
+	OR	A		; if (XCURR)=0
+	JR	Z,.L3
+	NEG
+	ADD	A,L
+	LD	L,A		; HL=VRAM+1000-(XCURR)
+.L1:	DEC	DE
+	LD	A,(DE)
+	LD	B,8
+.L2:	SCROLH
+	DEC	HL
+	SCROLH
+	DEC	HL
+	DEC	HL
+	DEC	HL
+	DEC	HL
+	DJNZ	.L2		; loop: 81-99 cycles per iteration
+	LD	A,E
+	CP	WORKSP+5 & 0FFH
+	JR	NZ,.L1
+	JR	.L5
+.L3:	DEC	DE
+	LD	A,(DE)
+	LD	B,8
+.L4:	DEC	HL
+	SCROLH
+	DEC	HL
+	DEC	HL
+	DEC	HL
+	DEC	HL
+	SCROLH
+	DJNZ	.L4		; loop: 81-99 cycles per iteration
+	LD	A,E
+	CP	WORKSP+5 & 0FFH
+	JR	NZ,.L3
+.L5:	CALL	DRAWPL
+	ENDM
+
+; ---------------------------------
+; Code
+; ---------------------------------
+
+	ORG	4000H
+
+START:	PAINT
+	CALL	DRAWPL
+POLL:	CALL	CLRWS
+	LD	HL,PPI
+	DI
+	LD	(HL),SHBRK
+	INC	L		; (need a tiny delay before fetching the keys)
+	LD	BC,POLL
+	LD	A,(HL)		; BC-----S (binary): break, ctrl, shift
+	EI
+	LD	(FAST),A
+	AND	81H		; shift+break
+	JR	NZ,POLL1
+	UNDO
+	JP	EXIT
+POLL1:	DEC	L
+	DI
+	LD	(HL),ARROWS
+	INC	L		; (need a tiny delay before fetching the keys)
+	PUSH	BC		; push return address (main loop)
+	LD	A,(HL)		; --UDRL-- (binary): up, down, right, left
+	EI
+	OR	0C3H		; neutralize non-arrow keys
+	LD	C,A
+	CPL			; now 1 = pressed, 0 = released
+	LD	B,A
+	LD	HL,KSTATE
+	AND	(HL)		; if new key pressed, use it
+	LD	(HL),C
+	INC	HL
+	JR	NZ,SWITCH
+	LD	A,B
+	AND	(HL)		; try the key that was used last time
+	JR	NZ,SWITCH
+	LD	A,B		; if that key was released, try another key
+SWITCH:	LD	(HL),A
+	RLCA
+	RLCA
+	RLCA
+	JP	C,MOVU		; up arrow key
+	RLCA
+	JP	C,MOVD		; down arrow key
+	RLCA
+	JP	C,MOVR		; right arrow key
+	RLCA
+	RET	NC
+	; fall through to MOVL; left arrow key
+
+; MOVL - player moves left (walls move right)
+
+MOVL:	LD	A,(IX+40)
+	OR	(IX+80)
+	RET	NZ	; blocked by wall
+	CALL	EDGEL
+	SCR0R
+	LD	BC,LEFT2*100H+RIGHT4	; B=LEFT2, C=RIGHT4
+	LD	DE,MCOLOR*100H+ICOLOR	; D=MCOLOR, E=ICOLOR
+	CALL	SCR4H			; leaves C=RIGHT4
+	LD	DE,RIGHT2*101H		; D=E=RIGHT2
+	CALL	SCR2H
+	LD	C,D			; C=RIGHT2
+	LD	DE,SPACE*100H+WALL	; D=SPACE, E=WALL
+	CALL	SCR2H
+	LD	HL,XCURR
+	DEC	(HL)
+	; fall through to MOVX
+
+; MOVX - change player position horizontally
+
+MOVX:	LD	A,(HL)
+	SUB	5
+	RET	C
+	LD	BC,HRIGHT
+	LD	DE,VRIGHT
+	JR	Z,MOVXY
+	LD	BC,HLEFT
+	LD	DE,VLEFT
+MOVXY4:	LD	A,4
+MOVXY:	LD	(HL),A
+MOVHV:	LD	HL,(HCURR)
+	ADD	HL,BC
+	LD	(HCURR),HL
+	LD	HL,(VCURR)
+	ADD	HL,DE
+	LD	(VCURR),HL
+	RET
+
+; MOVD - player moves down (walls move up)
+
+MOVD:	LD	A,(IX+121)
+	OR	(IX+122)
+	RET	NZ	; blocked by wall
+	CALL	EDGED
+	CALL	SCR0U
+	LD	C,LOWER2
+	LD	DE,LOWER4*101H		; D=E=LOWER4
+	CALL	SCR2V
+	LD	BC,LOWER4*100H+UPPER2	; B=LOWER4, C=UPPER2
+	LD	DE,ICOLOR*100H+MCOLOR	; D=ICOLOR, E=MCOLOR
+	CALL	SCR4V			; leaves C=UPPER2
+	LD	DE,WALL*100H+SPACE	; D=WALL, E=SPACE
+	CALL	SCR2V
+	LD	HL,YCURR
+	DEC	(HL)
+	; fall through to MOVY
+
+; MOVY - change player position vertically
+
+MOVY:	LD	A,(HL)
+	SUB	5
+	RET	C
+	LD	BC,HUP
+	LD	DE,VUP
+	JR	Z,MOVXY
+	LD	BC,HDOWN
+	LD	DE,VDOWN
+	JR	MOVXY4
+
+; MOVR - player moves right (walls move left)
+; Must be called with HL = XCURR-1
+
+MOVR:	LD	A,(IX+43)
+	OR	(IX+83)
+	RET	NZ	; blocked by wall
+	INC	HL	; HL=XCURR
+	INC	(HL)
+	CALL	MOVX
+	CALL	EDGER
+	SCR0L				; leaves C=RIGHT2
+	LD	DE,RIGHT4*101H		; D=E=RIGHT4
+	CALL	SCR2H
+	LD	BC,RIGHT4*100H+LEFT2	; B=RIGHT4, C=LEFT2
+	LD	DE,ICOLOR*100H+MCOLOR	; D=ICOLOR, E=MCOLOR
+	CALL	SCR4H			; leaves C=LEFT2
+	LD	DE,WALL*100H+SPACE	; D=WALL, E=SPACE
+	; fall through to SCR2H
+
+; SCR2H - scroll horizontally at 2 or 6 pixels
+; in: C = search, D = left char, E = right char
+; registers clobbered: AF, B, HL
+; 45 bytes
+
+SCR2H:	LD	HL,VRAM
+	LD	B,200
+	CALL	VBLANK
+	LD	A,(XCURR)
+	OR	A
+	JR	NZ,SCR2H1
+	LD	A,C
+	JR	SCR2H3
+SCR2H1:	CPL
+	ADD	A,5
+	LD	L,A
+	LD	A,C
+SCR2H2:	REPLD
+	INC	HL
+SCR2H3:	REPLE
+	INC	HL
+	INC	HL
+	INC	HL
+	INC	HL
+	DJNZ	SCR2H2		; loop: 81-85 cycles per iteration
+	LD	A,(XCURR)
+	OR	A
+	RET	NZ
+	LD	A,C
+	CP	(HL)
+	RET	NZ
+	LD	(HL),D
+	RET
+
+; MOVU - player moves up (walls move down)
+; Must be called with HL = YCURR-2
+
+MOVU:	LD	A,(IX+1)
+	OR	(IX+2)
+	RET	NZ	; blocked by wall
+	INC	HL
+	INC	HL	; HL=YCURR
+	INC	(HL)
+	CALL	MOVY
+	CALL	EDGEU
+	CALL	SCR0D
+	LD	BC,UPPER2*100H+LOWER4	; B=UPPER2, C=LOWER4
+	LD	DE,MCOLOR*100H+ICOLOR	; D=MCOLOR, E=ICOLOR
+	CALL	SCR4V			; leaves C=LOWER4
+	LD	DE,LOWER2*101H		; D=E=LOWER2
+	CALL	SCR2V
+	LD	C,D			; C=LOWER2
+	LD	DE,SPACE*100H+WALL	; D=SPACE, E=WALL
+	; fall through to SCR2V
+
+; SCR2V - scroll vertically at 2 or 6 pixels
+; in: C = search, D = replace 1st row, E = replace 2nd row
+; registers clobbered: AF, BC, D, HL
+
+SCR2V:	LD	HL,VRAM
+	CALL	VBLANK
+	LD	A,(YCURR)
+	OR	A		; if (YCURR)=0
+	JR	NZ,SCR2V1
+	LD	A,C
+	LD	C,5
+	JR	SCR2V3
+SCR2V1:	DEC	A
+	LD	L,A
+	ADD	A,A
+	ADD	A,A
+	ADD	A,L
+	ADD	A,A
+	ADD	A,A
+	ADD	A,A
+	LD	L,A
+	LD	A,C
+	LD	C,5
+SCR2V2:	REROD
+SCR2V3:	REROE
+	PUSH	BC
+	LD	C,COLS*3	; BC=120 (B is already zero)
+	ADD	HL,BC
+	POP	BC
+	DEC	C
+	JR	NZ,SCR2V2
+	LD	C,A
+	LD	A,(YCURR)
+	OR	A		; if (YCURR)=0
+	RET	NZ
+	LD	A,C
+	REROD
+	RET
+
+; SCR4H - scroll horizontally at 4 pixels
+; in: B = search, C = replace, D = left color code, E = right color code
+; registers clobbered: AF, B, HL
+
+SCR4H:	LD	HL,VRAM
+	CALL	VBLANK
+	LD	A,(XCURR)
+	OR	A		; if (XCURR)=0
+	JR	NZ,SCR4H1
+	LD	A,B
+	LD	B,4*ROWS
+	JR	SCR4H3
+SCR4H1:	CPL
+	ADD	A,5
+	LD	L,A		; HL=VRAM+4-(XCURR)
+	LD	A,B
+	LD	B,4*ROWS
+SCR4H2:	REPLCD
+	INC	HL
+SCR4H3:	REPLCE
+	INC	HL
+	INC	HL
+	INC	HL
+	INC	HL
+	REPLCD
+	INC	HL
+	REPLCE
+	INC	HL
+	INC	HL
+	INC	HL
+	INC	HL
+	DJNZ	SCR4H2
+	LD	B,A
+	LD	A,L
+	CP	COLS*ROWS-1 & 0FFH	; if (XCURR)=0
+	RET	NZ
+	LD	A,B
+	CP	(HL)
+	RET	NZ
+	LD	(HL),C
+	SET	3,H
+	LD	(HL),D
+	RES	3,H
+	RET
+
+; SCR0U - scroll maze up (player moving down)
+
+SCR0U:	LD	BC,COLS*100H+5	; B=COLS, C=5
+	LD	HL,VRAM+COLS
+	LD	D,H
+	CALL	VBLANK
+	CALL	CLRPL
+	LD	A,(YCURR)
+	LD	E,A
+	OR	A		; if (YCURR)=0
+	JR	NZ,SCR0U1
+	EX	DE,HL		; HL=VRAM, DE=VRAM+COLS
+	PUSH	BC
+	LD	B,COLS/2
+	JR	SCR0U3
+SCR0U1:	ADD	A,A
+	ADD	A,A
+	ADD	A,E
+	ADD	A,A
+	ADD	A,A
+	ADD	A,A
+	LD	E,A		; DE=VRAM+COLS*(YCURR)
+	SUB	L
+	LD	L,A		; HL=VRAM+COLS*(YCURR)-COLS
+	CP	COLS*3		; if (YCURR)=4
+	JR	Z,SCR0U5	; skip first loop iteration
+SCR0U2:	PUSH	BC
+SCR0U3:	LD	C,LOWER2
+SCR0U4:	SCROLV
+	INC	E		; equivalent to INC DE because E is even
+	INC	L		; equivalent to INC HL because L is even
+	SCROLV
+	INC	DE
+	INC	HL
+	DJNZ	SCR0U4		; loop: 85-89 cycles per iteration
+	LD	C,COLS*3	; BC=120 (B is already zero)
+	ADD	HL,BC
+	EX	DE,HL
+	ADD	HL,BC
+	EX	DE,HL
+	POP	BC
+SCR0U5:	DEC	C
+	JR	NZ,SCR0U2
+	CALL	DRAWPL
+	LD	A,L		; HL=VRAM+960/1000/1040/1080/920
+	ADD	A,19H		; A=D9h/01h/29h/51h/B1h for (YCURR)=0/1/2/3/4
+	RLCA
+	RET	NC		; return if (YCURR)=1/2/3
+	RLCA			; if (YCURR)=4
+	CALL	NC,SCR0U6
+	LD	DE,WORKSP+5
+SCR0U6:	LD	BC,COLS*80H+LOWER2	; B=COLS/2, C=LOWER2
+SCR0U7:	SCROLV
+	INC	E		; equivalent to INC DE because E is even
+	INC	L		; equivalent to INC HL because L is even
+	SCROLV
+	INC	DE
+	INC	HL
+	DJNZ	SCR0U7		; loop: 85-89 cycles per iteration
+	RET
+
+; SCR0D - scroll maze down (player moving up)
+
+SCR0D:	LD	BC,COLS*100H+5		; B=COLS, C=5
+	LD	HL,VRAM+COLS*ROWS
+	LD	D,H
+	CALL	VBLANK
+	CALL	CLRPL
+	LD	A,(YCURR)
+	OR	A			; if (YCURR)=0
+	JR	NZ,SCR0D1
+	LD	E,VRAM+COLS*(ROWS-1) & 0FFH
+	PUSH	BC
+	LD	B,COLS/2
+	JR	SCR0D3
+SCR0D1:	ADD	A,ROWS-5
+	LD	E,A
+	ADD	A,A
+	ADD	A,A
+	ADD	A,E
+	ADD	A,A
+	ADD	A,A
+	ADD	A,A
+	LD	E,A			; DE=VRAM+COLS*((YCURR)+20)
+	ADD	A,B
+	LD	L,A			; HL=VRAM+COLS*((YCURR)+21)
+	RLCA				; if (YCURR)=1
+	JR	NC,SCR0D5		; skip first loop iteration
+SCR0D2:	PUSH	BC
+SCR0D3:	LD	C,UPPER2
+SCR0D4:	DEC	DE
+	DEC	HL
+	SCROLV
+	DEC	E		; equivalent to DEC DE because E is odd
+	DEC	L		; equivalent to DEC HL because L is odd
+	SCROLV
+	DJNZ	SCR0D4		; loop: 85-89 cycles per iteration
+	LD	BC,-3*COLS
+	ADD	HL,BC
+	EX	DE,HL
+	ADD	HL,BC
+	EX	DE,HL
+	POP	BC
+SCR0D5:	DEC	C
+	JR	NZ,SCR0D2
+	CALL	DRAWPL
+	LD	A,E		; A=0/+40/-120/-80/-40 for (YCURR)=0/1/2/3/4
+	ADD	A,A
+	RET	C		; return if (YCURR)>1
+	CALL	NZ,SCR0D7	; call if (YCURR)=1
+SCR0D6:	LD	DE,WORKSP+COLS+5
+SCR0D7:	LD	BC,COLS*80H+UPPER2	; B=COLS/2, C=UPPER2
+SCR0D8:	DEC	DE
+	DEC	HL
+	SCROLV
+	DEC	E		; equivalent to DEC DE because E is odd
+	DEC	L		; equivalent to DEC HL because L is odd
+	SCROLV
+	DJNZ	SCR0D8		; loop: 85-89 cycles per iteration
+	RET
+
+; SCR4V - scroll vertically at 4 pixels
+; in: B = search, C = replace, D = left color code, E = right color code
+; registers clobbered: AF, B, HL
+
+SCR4V:	LD	HL,VRAM
+	CALL	VBLANK
+	LD	A,(YCURR)
+	OR	A		; if (YCURR)=0
+	JR	NZ,SCR4V1
+	LD	A,B
+	LD	B,ROWS/5
+	PUSH	BC
+	JR	SCR4V3
+SCR4V1:	DEC	A
+	LD	L,A
+	ADD	A,A
+	ADD	A,A
+	ADD	A,L
+	ADD	A,A
+	ADD	A,A
+	ADD	A,A
+	LD	L,A
+	LD	A,B
+	LD	B,ROWS/5
+SCR4V2:	PUSH	BC
+	REROCD
+SCR4V3:	REROCE
+	LD	C,COLS*3	; BC=120 (B is already zero)
+	ADD	HL,BC
+	POP	BC
+	DJNZ	SCR4V2
+	LD	B,A
+	LD	A,L
+	CP	COLS*(ROWS-1) & 0FFH	; if (YCURR)=0
+	RET	NZ
+	LD	A,B
+	REROCD
+	RET
+
+; CLRWS - clear workspace
+; registers clobbered: AF, B, HL
+; 10 bytes
+
+CLRWS:	LD	HL,WORKSP+1
+	LD	B,44	; the first and last byte are irrelevant
+	XOR	A	; A=SPACE
+CLRWS1:	LD	(HL),A
+	INC	HL
+	DJNZ	CLRWS1
+	RET
+
+; EDGEL - calculate off-screen characters at left edge
+; registers clobbered: AF, BC, DE, HL
+
+EDGEL:	LD	HL,WORKSP+ROWS+5
+	LD	A,(YCURR)
+	LD	C,A
+	LD	B,0
+	ADD	HL,BC
+	EX	DE,HL		; DE=WORKSP+ROWS+5+(YCURR)
+	LD	HL,(HCURR)
+	LD	BC,4*HLEFT+HDOWN
+	ADD	HL,BC
+	LD	BC,HUP
+	CALL	CROSS
+	LD	A,(XCURR)
+	OR	A
+	RET	NZ
+	LD	BC,HLEFT+5*HDOWN
+	ADD	HL,BC
+	LD	BC,HUP
+	CALL	CROSS
+	LD	BC,4*VLEFT+2*VDOWN
+	JR	EDGELR
+
+; EDGER - calculate off-screen characters at right edge
+; registers clobbered: AF, BC, DE, HL
+
+EDGER:	LD	HL,WORKSP+ROWS+5
+	LD	A,(YCURR)
+	LD	C,A
+	LD	B,0
+	ADD	HL,BC
+	EX	DE,HL		; DE=WORKSP+ROWS+5+(YCURR)
+	LD	HL,(HCURR)
+	LD	BC,4*HRIGHT+HDOWN
+	ADD	HL,BC
+	LD	BC,HUP
+	CALL	CROSS
+	LD	A,(XCURR)
+	OR	A
+	RET	NZ
+	LD	BC,HLEFT+5*HDOWN
+	ADD	HL,BC
+	LD	BC,HUP
+	CALL	CROSS
+	LD	BC,4*VRIGHT+2*VDOWN
+EDGELR:	LD	HL,(VCURR)
+	ADD	HL,BC
+	LD	BC,VUP
+	JR	PARAL
+
+; EDGEU - calculate off-screen characters at top edge
+; registers clobbered: AF, BC, DE, HL
+
+EDGEU:	LD	HL,WORKSP+COLS+10
+	LD	A,(XCURR)
+	CPL
+	LD	C,A
+	LD	B,-1
+	ADD	HL,BC
+	EX	DE,HL		; HL=WORKSP+COLS+9-(XCURR)
+	LD	HL,(VCURR)
+	LD	BC,4*VRIGHT+3*VUP
+	ADD	HL,BC
+	LD	BC,VLEFT
+	CALL	CROSS
+	LD	A,(YCURR)
+	OR	A
+	RET	NZ
+	LD	BC,8*VRIGHT+VDOWN
+	ADD	HL,BC
+	LD	BC,VLEFT
+	CALL	CROSS
+	LD	BC,4*HRIGHT+3*HUP
+	JR	EDGEUD
+
+; EDGED - calculate off-screen characters at bottom edge
+; registers clobbered: AF, BC, DE, HL
+
+EDGED:	LD	HL,WORKSP+COLS+10
+	LD	A,(XCURR)
+	CPL
+	LD	C,A
+	LD	B,-1
+	ADD	HL,BC
+	EX	DE,HL		; HL=WORKSP+COLS+9-(XCURR)
+	LD	HL,(VCURR)
+	LD	BC,4*VRIGHT+2*VDOWN
+	ADD	HL,BC
+	LD	BC,VLEFT
+	CALL	CROSS
+	LD	A,(YCURR)
+	OR	A
+	RET	NZ
+	LD	BC,8*VRIGHT+VDOWN
+	ADD	HL,BC
+	LD	BC,VLEFT
+	CALL	CROSS
+	LD	BC,4*HRIGHT+2*HDOWN
+EDGEUD:	LD	HL,(HCURR)
+	ADD	HL,BC
+	LD	BC,HLEFT
+	; fall through to PARAL
+
+; PARAL - set walls parallel with edge
+; in:     BC = post-increment for seed
+; in/out: HL = seed
+;         DE = workspace address
+; registers clobbered: AF, DE, HL
+
+PARAL:	HASHI
+	JP	PO,PARAL1
+	DEC	DE
+	DEC	DE
+	DEC	DE
+	DEC	DE
+	DEC	DE
+	JR	PARAL2
+PARAL1:	LD	A,WALL
+	LD	(DE),A
+	DEC	DE
+	LD	(DE),A
+	DEC	DE
+	LD	(DE),A
+	DEC	DE
+	LD	(DE),A
+	DEC	DE
+	LD	(DE),A
+	DEC	DE
+	LD	(DE),A
+PARAL2:	LD	A,E
+	CP	WORKSP+5 & 0FFH
+	JR	NC,PARAL
+	RET
+
+; CROSS - set crossing walls
+; in:     BC = post-increment for seed
+; in/out: HL = seed
+;         DE = workspace address
+; registers clobbered: AF, HL
+
+CROSS:	PUSH	DE
+CROSS1:	DEC	DE
+	DEC	DE
+	DEC	DE
+	DEC	DE
+	DEC	DE
+	HASHI
+	JP	PE,CROSS2
+	LD	A,WALL
+	LD	(DE),A
+CROSS2:	LD	A,E
+	CP	WORKSP+10 & 0FFH
+	JR	NC,CROSS1
+	POP	DE
+	RET
+
+; DRAWPL - draw player
+
+DRAWPL:	LD	(IX+41),PL1
+	LD	(IX+42),PL2
+	LD	(IX+81),PL3
+	LD	(IX+82),PL4
+	RET
+
+; CLRPL - clear player
+
+CLRPL:	XOR	A
+CLRPL1:	LD	(IX+41),A
+	LD	(IX+42),A
+	LD	(IX+81),A
+	LD	(IX+82),A
+	RET
+
+; ---------------------------------
+; Initialized variables
+; ---------------------------------
+
+; KSTATE - keyboard status
+; bits 5/4/3/2 are arrow keys up/down/right/left
+
+KSTATE:	DEFB	-1	; keyboard state, last time (0 = pressed)
+	DEFB	0	; key that took effect last time (1 = pressed)
+
+; XCURR - current X position, sub-cell
+;
+; 0: ----+----+----+----+----+----+----+----+
+; 1: ---+----+----+----+----+----+----+----+-
+; 2: --+----+----+----+-PL-+----+----+----+--
+; 3: -+----+----+----+----+----+----+----+---
+; 4: +----+----+----+----+----+----+----+----
+
+XCURR:	DEFB	2
+
+; YCURR - current Y position, sub-cell
+;
+;  0   1   2   3   4
+; -+-  |   |   |   |
+;  |  -+-  |   |   |
+;  |   |  -+-  |   |
+;  |   |   |  -+-  |
+;  |   |   |   |  -+-
+; -+-  |   |   |   |
+;  |  -+-  |   |   |
+;  |   |  -+-  |   |
+;  |   |   |  -+-  |
+;  |   |   |   |  -+-
+; -+-  |   |   |   |
+;  |  -+-  |   |   |
+;  PL  |  -+-  |   |
+;  PL  |   |  -+-  |
+;  |   |   |   |  -+-
+; -+-  |   |   |   |
+;  |  -+-  |   |   |
+;  |   |  -+-  |   |
+;  |   |   |  -+-  |
+;  |   |   |   |  -+-
+; -+-  |   |   |   |
+;  |  -+-  |   |   |
+;  |   |  -+-  |   |
+;  |   |   |  -+-  |
+;  |   |   |   |  -+-
+
+YCURR:	DEFB	0
+
+; HCURR - current position, hashed for horizontal walls
+
+HCURR:	DEFW	HRIGHT*POSX+HUP*POSY & 0FFFFH
+
+; VCURR - current position, hashed for vertical walls
+
+VCURR:	DEFW	VRIGHT*POSX+VUP*POSY & 0FFFFH
+
+; ---------------------------------
+; Uninitialized variables
+; ---------------------------------
+
+; FAST - if bit 0 is 0, run faster
+; (currently unused)
+
+FAST:	DEFS	+1
+
+; WORKSP - workspace
+
+WORKSP:	DEFS	+50
+
+	END
