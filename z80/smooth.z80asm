@@ -18,11 +18,12 @@ VRAMC:	EQU	0D800H	; start address (colors)
 COLS:	EQU	40	; screen width (number of columns)
 ROWS:	EQU	25	; screen height (number of rows)
 SPACE:	EQU	00H	; character code: space
-WALL:	EQU	0F0H	; character code: alternate space (wall)
 LEFT2:	EQU	37H	; character code: left 2 pixels set
+LEFT4:	EQU	7BH	; character code: left 4 pixels set
 RIGHT4:	EQU	3BH	; character code: right 4 pixels set
 RIGHT2:	EQU	3FH	; character code: right 2 pixels set
 UPPER2:	EQU	36H	; character code: upper 2 pixels set
+UPPER4:	EQU	7AH	; character code: upper 4 pixels set
 LOWER4:	EQU	3AH	; character code: lower 4 pixels set
 LOWER2:	EQU	3EH	; character code: lower 2 pixels set
 MCOLOR:	EQU	40H	; color code: maze
@@ -71,6 +72,14 @@ POSY:	EQU	35273
 ; Macros
 ; ---------------------------------
 
+; LDAIYL - workaround for unrecognized LD A,IYL
+; 2 bytes; 8 cycles
+
+LDAIYL:	MACRO
+	DEFB	0FDH	; prefix for IY
+	LD	A,L
+	ENDM
+
 ; HASHI - hash and increment
 ; in:     BC = post-increment for seed
 ; in/out: HL = seed
@@ -84,7 +93,7 @@ HASHI:	MACRO
 	ADD	HL,BC
 	ENDM
 
-; PAINT - fully paint maze on screen (only at the start)
+; PAINT - paint maze on screen, row by row (from the bottom up)
 
 PAINT:	MACRO
 	LD	BC,5*HDOWN
@@ -105,32 +114,35 @@ PAINT:	MACRO
 	DEC	HL
 	LD	A,(DE)
 	SET	2,D
-	LD	(DE),A
+	LD	(DE),A		; save original color code
 	RES	2,D
 	RES	3,D
 	LD	A,(DE)
 	SET	2,D
-	LD	(DE),A
+	LD	(DE),A		; save original character code
 	RES	2,D
-	LD	A,(HL)
-	LD	(DE),A
-	RLCA
-	SBC	A,A
-	AND	MCOLOR^ICOLOR
-	XOR	MCOLOR
+	XOR	A		; A=SPACE
+	LD	(DE),A		; put new character code
 	SET	3,D
-	LD	(DE),A
+	LD	A,(HL)
+	LD	(DE),A		; put new color code
 	DJNZ	.INNER
 	LD	A,E
 	OR	A
 	JR	NZ,.OUTER
+	LD	HL,VRAM+499
+	LD	(HL),PL1
+	INC	L
+	LD	(HL),PL2
+	LD	HL,VRAM+539
+	LD	(HL),PL3
+	INC	L
+	LD	(HL),PL4
 	LD	IX,VRAMC+458	; center of screen
-	LD	A,PCOLOR
-	CALL	CLRPL1
-	LD	IX,VRAM+458	; center of screen
+	CALL	DRAWPL
 	ENDM
 
-; UNDO - restore original video RAM contents
+; UNDO - restore original video RAM contents, row by row (from the top down)
 
 UNDO:	MACRO
 	LD	DE,VRAMC
@@ -140,12 +152,12 @@ UNDO:	MACRO
 .INNER:	SET	2,D
 	LD	A,(DE)
 	RES	2,D
-	LD	(DE),A
+	LD	(DE),A		; restore original color code
 	RES	3,D
 	SET	2,D
 	LD	A,(DE)
 	RES	2,D
-	LD	(DE),A
+	LD	(DE),A		; restore original character code
 	SET	3,D
 	INC	DE
 	DJNZ	.INNER
@@ -154,31 +166,35 @@ UNDO:	MACRO
 	ENDM
 
 ; SCROLH - scroll horizontally
-; in:     HL = video RAM address (characters)
+; in:     HL = video RAM address (colors)
 ;         C  = new character code
-; in/out: A  = neighboring old character code
+; in/out: A  = neighboring old color code
 ; registers clobbered: AF
-; 5 bytes; 19 or 28 cycles
+; 9 bytes; 19 or 44 cycles
 
 SCROLH:	MACRO
 	CP	(HL)
 	JR	Z,.SKIP
 	LD	A,(HL)
+	RES	3,H
 	LD	(HL),C
+	SET	3,H
 .SKIP:	ENDM
 
 ; SCROLV - scroll vertically
-; in: HL = video RAM address (characters)
+; in: HL = video RAM address (colors)
 ;     DE = comparison address (video RAM or workspace)
 ;     C  = new character code
 ; registers clobbered: AF
-; 5 bytes; 26 or 28 cycles
+; 9 bytes; 26 or 44 cycles
 
 SCROLV:	MACRO
 	LD	A,(DE)
 	CP	(HL)
 	JR	Z,.SKIP
+	RES	3,H
 	LD	(HL),C
+	SET	3,H
 .SKIP:	ENDM
 
 ; REPLD - replace character only (D)
@@ -192,19 +208,6 @@ REPLD:	MACRO
 	CP	(HL)
 	JR	NZ,.SKIP
 	LD	(HL),D
-.SKIP:	ENDM
-
-; REPLE - replace character only (E)
-; in: HL = video RAM address (characters)
-;     A  = old character code
-;     E  = new character code
-; registers clobbered: F
-; 4 bytes; 19 or 21 cycles
-
-REPLE:	MACRO
-	CP	(HL)
-	JR	NZ,.SKIP
-	LD	(HL),E
 .SKIP:	ENDM
 
 ; REPLCD - replace character and color (C and D)
@@ -245,30 +248,14 @@ REPLCE:	MACRO
 ; in/out: HL = video RAM address (characters)
 ; in:     A  = old character code
 ;         D  = new character code
+;         B  = 20 for one row, 40 for two rows
 ; registers clobbered: F, B, HL
 ; 14 bytes, 1222~1302 cycles
 
 REROD:	MACRO
-	LD	B,COLS/2
 .LOOP:	REPLD
 	INC	L
 	REPLD
-	INC	HL
-	DJNZ	.LOOP
-	ENDM
-
-; REROE - replace characters, entire row
-; in/out: HL = video RAM address (characters)
-; in:     A  = old character code
-;         E  = new character code
-; registers clobbered: F, B, HL
-; 14 bytes, 1222~1302 cycles
-
-REROE:	MACRO
-	LD	B,COLS/2
-.LOOP:	REPLE
-	INC	L
-	REPLE
 	INC	HL
 	DJNZ	.LOOP
 	ENDM
@@ -278,7 +265,7 @@ REROE:	MACRO
 ; in:     A  = old character code
 ;         C  = new character code
 ;         D  = new color code
-; registers clobbered: F, B, HL
+; registers clobbered: F, B, HL (B is made 0)
 ; 24 bytes, 1222~2222 cycles
 
 REROCD:	MACRO
@@ -295,7 +282,7 @@ REROCD:	MACRO
 ; in:     A  = old character code
 ;         C  = new character code
 ;         E  = new color code
-; registers clobbered: F, B, HL
+; registers clobbered: F, B, HL (B is made 0)
 ; 24 bytes, 1222~2222 cycles
 
 REROCE:	MACRO
@@ -308,12 +295,14 @@ REROCE:	MACRO
 	ENDM
 
 ; SCR0R - scroll maze to the right (player moving left)
-; registers clobbered: AF, BC, DE, HL; makes C=LEFT2
+; in: C = replacement character
+; registers clobbered: AF, B, DE, HL, IY
 
 SCR0R:	MACRO
-	LD	C,LEFT2
-	LD	DE,WORKSP+5
-	LD	HL,VRAM
+	LD	IY,WORKSP+5
+	LD	DE,4
+	LD	HL,VRAMC
+	LD	A,MCOLOR
 	CALL	VBLANK
 	CALL	CLRPL
 	LD	A,(XCURR)
@@ -321,46 +310,43 @@ SCR0R:	MACRO
 	JR	Z,.L3
 	CPL
 	ADD	A,5
-	LD	L,A		; HL=VRAM+4-(XCURR)
-.L1:	LD	A,(DE)
-	INC	DE
+	LD	L,A		; HL=VRAMC+4-(XCURR)
+.L1:	LD	A,(IY+0)
+	INC	IY
 	LD	B,8
 .L2:	SCROLH
 	INC	HL
 	SCROLH
-	INC	HL
-	INC	HL
-	INC	HL
-	INC	HL
-	DJNZ	.L2		; loop: 81-99 cycles per iteration
-	LD	A,E
+	ADD	HL,DE
+	DJNZ	.L2		; loop: 68~118 cycles per iteration
+	LDAIYL
 	CP	WORKSP+ROWS+5 & 0FFH
 	JR	NZ,.L1
 	JR	.L5
-.L3:	LD	A,(DE)
-	INC	DE
+.L3:	LD	A,(IY+0)
+	INC	IY
+	LD	DE,4
 	LD	B,8
 .L4:	SCROLH
-	INC	HL
-	INC	HL
-	INC	HL
-	INC	HL
+	ADD	HL,DE
 	SCROLH
 	INC	HL
 	DJNZ	.L4		; loop: 81-99 cycles per iteration
-	LD	A,E
+	LDAIYL
 	CP	WORKSP+ROWS+5 & 0FFH
 	JR	NZ,.L3
 .L5:	CALL	DRAWPL
 	ENDM
 
 ; SCR0L - scroll maze to the left (player moving right)
-; registers clobbered: AF, BC, DE, HL; makes C=RIGHT2
+; in: C = replacement character
+; registers clobbered: AF, B, DE, HL, IY
 
 SCR0L:	MACRO
-	LD	C,RIGHT2
-	LD	DE,WORKSP+ROWS+5
-	LD	HL,VRAM+COLS*ROWS
+	LD	IY,WORKSP+ROWS+5
+	LD	DE,-4
+	LD	HL,VRAMC+COLS*ROWS
+	LD	A,MCOLOR
 	CALL	VBLANK
 	CALL	CLRPL
 	LD	A,(XCURR)
@@ -368,34 +354,28 @@ SCR0L:	MACRO
 	JR	Z,.L3
 	NEG
 	ADD	A,L
-	LD	L,A		; HL=VRAM+1000-(XCURR)
-.L1:	DEC	DE
-	LD	A,(DE)
+	LD	L,A		; HL=VRAMC+1000-(XCURR)
+.L1:	DEC	IY
+	LD	A,(IY+0)
 	LD	B,8
 .L2:	SCROLH
 	DEC	HL
 	SCROLH
-	DEC	HL
-	DEC	HL
-	DEC	HL
-	DEC	HL
+	ADD	HL,DE
 	DJNZ	.L2		; loop: 81-99 cycles per iteration
-	LD	A,E
+	LDAIYL
 	CP	WORKSP+5 & 0FFH
 	JR	NZ,.L1
 	JR	.L5
-.L3:	DEC	DE
-	LD	A,(DE)
+.L3:	DEC	IY
+	LD	A,(IY+0)
 	LD	B,8
 .L4:	DEC	HL
 	SCROLH
-	DEC	HL
-	DEC	HL
-	DEC	HL
-	DEC	HL
+	ADD	HL,DE
 	SCROLH
 	DJNZ	.L4		; loop: 81-99 cycles per iteration
-	LD	A,E
+	LDAIYL
 	CP	WORKSP+5 & 0FFH
 	JR	NZ,.L3
 .L5:	CALL	DRAWPL
@@ -443,6 +423,7 @@ POLL1:	DEC	L
 	JR	NZ,SWITCH
 	LD	A,B		; if that key was released, try another key
 SWITCH:	LD	(HL),A
+	LD	B,2*MCOLOR	; for collision detect
 	RLCA
 	RLCA
 	RLCA
@@ -458,17 +439,19 @@ SWITCH:	LD	(HL),A
 ; MOVL - player moves left (walls move right)
 
 MOVL:	LD	A,(IX+40)
-	OR	(IX+80)
+	ADD	A,(IX+80)
+	CP	B
 	RET	NZ	; blocked by wall
 	CALL	EDGEL
+	LD	C,LEFT2
 	SCR0R
 	LD	BC,LEFT2*100H+RIGHT4	; B=LEFT2, C=RIGHT4
 	LD	DE,MCOLOR*100H+ICOLOR	; D=MCOLOR, E=ICOLOR
 	CALL	SCR4H			; leaves C=RIGHT4
-	LD	DE,RIGHT2*101H		; D=E=RIGHT2
+	LD	D,RIGHT2
 	CALL	SCR2H
 	LD	C,D			; C=RIGHT2
-	LD	DE,SPACE*100H+WALL	; D=SPACE, E=WALL
+	LD	D,SPACE
 	CALL	SCR2H
 	LD	HL,XCURR
 	DEC	(HL)
@@ -497,17 +480,19 @@ MOVHV:	LD	HL,(HCURR)
 ; MOVD - player moves down (walls move up)
 
 MOVD:	LD	A,(IX+121)
-	OR	(IX+122)
+	ADD	A,(IX+122)
+	CP	B
 	RET	NZ	; blocked by wall
 	CALL	EDGED
 	CALL	SCR0U
-	LD	C,LOWER2
-	LD	DE,LOWER4*101H		; D=E=LOWER4
+	LD	B,LOWER2
+	LD	D,LOWER4
 	CALL	SCR2V
 	LD	BC,LOWER4*100H+UPPER2	; B=LOWER4, C=UPPER2
 	LD	DE,ICOLOR*100H+MCOLOR	; D=ICOLOR, E=MCOLOR
-	CALL	SCR4V			; leaves C=UPPER2
-	LD	DE,WALL*100H+SPACE	; D=WALL, E=SPACE
+	CALL	SCR4V
+	LD	B,C			; B=UPPER2
+	LD	D,SPACE
 	CALL	SCR2V
 	LD	HL,YCURR
 	DEC	(HL)
@@ -529,25 +514,26 @@ MOVY:	LD	A,(HL)
 ; Must be called with HL = XCURR-1
 
 MOVR:	LD	A,(IX+43)
-	OR	(IX+83)
+	ADD	A,(IX+83)
+	CP	B
 	RET	NZ	; blocked by wall
 	INC	HL	; HL=XCURR
 	INC	(HL)
 	CALL	MOVX
 	CALL	EDGER
+	LD	C,RIGHT2
 	SCR0L				; leaves C=RIGHT2
-	LD	DE,RIGHT4*101H		; D=E=RIGHT4
+	LD	D,RIGHT4
 	CALL	SCR2H
 	LD	BC,RIGHT4*100H+LEFT2	; B=RIGHT4, C=LEFT2
 	LD	DE,ICOLOR*100H+MCOLOR	; D=ICOLOR, E=MCOLOR
 	CALL	SCR4H			; leaves C=LEFT2
-	LD	DE,WALL*100H+SPACE	; D=WALL, E=SPACE
+	LD	D,SPACE
 	; fall through to SCR2H
 
 ; SCR2H - scroll horizontally at 2 or 6 pixels
-; in: C = search, D = left char, E = right char
+; in: C = search character, D = replacement character
 ; registers clobbered: AF, B, HL
-; 45 bytes
 
 SCR2H:	LD	HL,VRAM
 	LD	B,200
@@ -563,7 +549,7 @@ SCR2H1:	CPL
 	LD	A,C
 SCR2H2:	REPLD
 	INC	HL
-SCR2H3:	REPLE
+SCR2H3:	REPLD
 	INC	HL
 	INC	HL
 	INC	HL
@@ -582,7 +568,8 @@ SCR2H3:	REPLE
 ; Must be called with HL = YCURR-2
 
 MOVU:	LD	A,(IX+1)
-	OR	(IX+2)
+	ADD	A,(IX+2)
+	CP	B
 	RET	NZ	; blocked by wall
 	INC	HL
 	INC	HL	; HL=YCURR
@@ -592,24 +579,27 @@ MOVU:	LD	A,(IX+1)
 	CALL	SCR0D
 	LD	BC,UPPER2*100H+LOWER4	; B=UPPER2, C=LOWER4
 	LD	DE,MCOLOR*100H+ICOLOR	; D=MCOLOR, E=ICOLOR
-	CALL	SCR4V			; leaves C=LOWER4
-	LD	DE,LOWER2*101H		; D=E=LOWER2
+	CALL	SCR4V
+	LD	B,C			; B=LOWER4
+	LD	D,LOWER2
 	CALL	SCR2V
-	LD	C,D			; C=LOWER2
-	LD	DE,SPACE*100H+WALL	; D=SPACE, E=WALL
+	LD	B,D			; C=LOWER2
+	LD	D,SPACE
 	; fall through to SCR2V
 
 ; SCR2V - scroll vertically at 2 or 6 pixels
-; in: C = search, D = replace 1st row, E = replace 2nd row
-; registers clobbered: AF, BC, D, HL
+; in: B = search character, D = replacement character
+; registers clobbered: AF, BC, E, HL
 
 SCR2V:	LD	HL,VRAM
+	LD	E,5
+	LD	C,COLS*3
 	CALL	VBLANK
 	LD	A,(YCURR)
 	OR	A		; if (YCURR)=0
 	JR	NZ,SCR2V1
-	LD	A,C
-	LD	C,5
+	LD	A,B
+	LD	B,COLS/2
 	JR	SCR2V3
 SCR2V1:	DEC	A
 	LD	L,A
@@ -620,21 +610,18 @@ SCR2V1:	DEC	A
 	ADD	A,A
 	ADD	A,A
 	LD	L,A
-	LD	A,C
-	LD	C,5
-SCR2V2:	REROD
-SCR2V3:	REROE
-	PUSH	BC
-	LD	C,COLS*3	; BC=120 (B is already zero)
-	ADD	HL,BC
-	POP	BC
-	DEC	C
+	LD	A,B
+SCR2V2:	LD	B,COLS
+SCR2V3:	REROD
+	ADD	HL,BC		; HL+=120 (B was already zero)
+	DEC	E
 	JR	NZ,SCR2V2
-	LD	C,A
+	LD	B,A
 	LD	A,(YCURR)
 	OR	A		; if (YCURR)=0
 	RET	NZ
-	LD	A,C
+	LD	A,B
+	LD	B,COLS/2
 	REROD
 	RET
 
@@ -686,15 +673,16 @@ SCR4H3:	REPLCE
 ; SCR0U - scroll maze up (player moving down)
 
 SCR0U:	LD	BC,COLS*100H+5	; B=COLS, C=5
-	LD	HL,VRAM+COLS
+	LD	HL,VRAMC+COLS
 	LD	D,H
+	LD	A,MCOLOR
 	CALL	VBLANK
 	CALL	CLRPL
 	LD	A,(YCURR)
 	LD	E,A
 	OR	A		; if (YCURR)=0
 	JR	NZ,SCR0U1
-	EX	DE,HL		; HL=VRAM, DE=VRAM+COLS
+	EX	DE,HL		; HL=VRAMC, DE=VRAMC+COLS
 	PUSH	BC
 	LD	B,COLS/2
 	JR	SCR0U3
@@ -704,9 +692,9 @@ SCR0U1:	ADD	A,A
 	ADD	A,A
 	ADD	A,A
 	ADD	A,A
-	LD	E,A		; DE=VRAM+COLS*(YCURR)
+	LD	E,A		; DE=VRAMC+COLS*(YCURR)
 	SUB	L
-	LD	L,A		; HL=VRAM+COLS*(YCURR)-COLS
+	LD	L,A		; HL=VRAMC+COLS*(YCURR)-COLS
 	CP	COLS*3		; if (YCURR)=4
 	JR	Z,SCR0U5	; skip first loop iteration
 SCR0U2:	PUSH	BC
@@ -727,7 +715,7 @@ SCR0U4:	SCROLV
 SCR0U5:	DEC	C
 	JR	NZ,SCR0U2
 	CALL	DRAWPL
-	LD	A,L		; HL=VRAM+960/1000/1040/1080/920
+	LD	A,L		; HL=VRAMC+960/1000/1040/1080/920
 	ADD	A,19H		; A=D9h/01h/29h/51h/B1h for (YCURR)=0/1/2/3/4
 	RLCA
 	RET	NC		; return if (YCURR)=1/2/3
@@ -747,14 +735,15 @@ SCR0U7:	SCROLV
 ; SCR0D - scroll maze down (player moving up)
 
 SCR0D:	LD	BC,COLS*100H+5		; B=COLS, C=5
-	LD	HL,VRAM+COLS*ROWS
+	LD	HL,VRAMC+COLS*ROWS
 	LD	D,H
+	LD	A,MCOLOR
 	CALL	VBLANK
 	CALL	CLRPL
 	LD	A,(YCURR)
 	OR	A			; if (YCURR)=0
 	JR	NZ,SCR0D1
-	LD	E,VRAM+COLS*(ROWS-1) & 0FFH
+	LD	E,VRAMC+COLS*(ROWS-1) & 0FFH
 	PUSH	BC
 	LD	B,COLS/2
 	JR	SCR0D3
@@ -766,9 +755,9 @@ SCR0D1:	ADD	A,ROWS-5
 	ADD	A,A
 	ADD	A,A
 	ADD	A,A
-	LD	E,A			; DE=VRAM+COLS*((YCURR)+20)
+	LD	E,A			; DE=VRAMC+COLS*((YCURR)+20)
 	ADD	A,B
-	LD	L,A			; HL=VRAM+COLS*((YCURR)+21)
+	LD	L,A			; HL=VRAMC+COLS*((YCURR)+21)
 	RLCA				; if (YCURR)=1
 	JR	NC,SCR0D5		; skip first loop iteration
 SCR0D2:	PUSH	BC
@@ -844,18 +833,17 @@ SCR4V3:	REROCE
 	RET
 
 ; CLRWS - clear workspace
-; registers clobbered: AF, B, HL
-; 10 bytes
+; registers clobbered: A, B, HL
 
-CLRWS:	LD	HL,WORKSP+1
-	LD	B,44	; the first and last byte are irrelevant
-	XOR	A	; A=SPACE
+CLRWS:	LD	HL,WORKSP+5
+	LD	B,COLS		; 5+5 off-screen bytes are irrelevant
+	LD	A,MCOLOR
 CLRWS1:	LD	(HL),A
 	INC	HL
 	DJNZ	CLRWS1
 	RET
 
-; EDGEL - calculate off-screen characters at left edge
+; EDGEL - calculate off-screen colors at left edge
 ; registers clobbered: AF, BC, DE, HL
 
 EDGEL:	LD	HL,WORKSP+ROWS+5
@@ -879,7 +867,7 @@ EDGEL:	LD	HL,WORKSP+ROWS+5
 	LD	BC,4*VLEFT+2*VDOWN
 	JR	EDGELR
 
-; EDGER - calculate off-screen characters at right edge
+; EDGER - calculate off-screen colors at right edge
 ; registers clobbered: AF, BC, DE, HL
 
 EDGER:	LD	HL,WORKSP+ROWS+5
@@ -906,7 +894,7 @@ EDGELR:	LD	HL,(VCURR)
 	LD	BC,VUP
 	JR	PARAL
 
-; EDGEU - calculate off-screen characters at top edge
+; EDGEU - calculate off-screen colors at top edge
 ; registers clobbered: AF, BC, DE, HL
 
 EDGEU:	LD	HL,WORKSP+COLS+10
@@ -931,7 +919,7 @@ EDGEU:	LD	HL,WORKSP+COLS+10
 	LD	BC,4*HRIGHT+3*HUP
 	JR	EDGEUD
 
-; EDGED - calculate off-screen characters at bottom edge
+; EDGED - calculate off-screen colors at bottom edge
 ; registers clobbered: AF, BC, DE, HL
 
 EDGED:	LD	HL,WORKSP+COLS+10
@@ -973,7 +961,7 @@ PARAL:	HASHI
 	DEC	DE
 	DEC	DE
 	JR	PARAL2
-PARAL1:	LD	A,WALL
+PARAL1:	LD	A,ICOLOR
 	LD	(DE),A
 	DEC	DE
 	LD	(DE),A
@@ -1004,7 +992,7 @@ CROSS1:	DEC	DE
 	DEC	DE
 	HASHI
 	JP	PE,CROSS2
-	LD	A,WALL
+	LD	A,ICOLOR
 	LD	(DE),A
 CROSS2:	LD	A,E
 	CP	WORKSP+10 & 0FFH
@@ -1013,17 +1001,10 @@ CROSS2:	LD	A,E
 	RET
 
 ; DRAWPL - draw player
-
-DRAWPL:	LD	(IX+41),PL1
-	LD	(IX+42),PL2
-	LD	(IX+81),PL3
-	LD	(IX+82),PL4
-	RET
-
 ; CLRPL - clear player
 
-CLRPL:	XOR	A
-CLRPL1:	LD	(IX+41),A
+DRAWPL:	LD	A,PCOLOR
+CLRPL:	LD	(IX+41),A
 	LD	(IX+42),A
 	LD	(IX+81),A
 	LD	(IX+82),A
