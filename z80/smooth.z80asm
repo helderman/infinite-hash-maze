@@ -321,7 +321,7 @@ SCROR:	MACRO
 	ADD	HL,DE
 	HCHAR
 	INC	HL
-	DJNZ	.L4		; loop: 81-99 cycles per iteration
+	DJNZ	.L4		; loop: 68~118 cycles per iteration
 	LDAIYL
 	CP	WORKSP+ROWS+5 & 0FFH
 	JR	NZ,.L3
@@ -331,6 +331,8 @@ SCROR:	MACRO
 ; SCROL - scroll maze to the left (player moving right)
 ; in: C = replacement character
 ; registers clobbered: AF, B, DE, HL, IY
+; could take up to 25387 cycles into VBLANK to draw the entire frame
+; (but I see flicker on the real machine; undocumented wait states?)
 
 SCROL:	MACRO
 	LD	IY,WORKSP+ROWS+5
@@ -352,7 +354,7 @@ SCROL:	MACRO
 	DEC	HL
 	HCHAR
 	ADD	HL,DE
-	DJNZ	.L2		; loop: 81-99 cycles per iteration
+	DJNZ	.L2		; loop: 68~118 cycles per iteration
 	LDAIYL
 	CP	WORKSP+5 & 0FFH
 	JR	NZ,.L1
@@ -364,7 +366,7 @@ SCROL:	MACRO
 	HCHAR
 	ADD	HL,DE
 	HCHAR
-	DJNZ	.L4		; loop: 81-99 cycles per iteration
+	DJNZ	.L4		; loop: 68~118 cycles per iteration
 	LDAIYL
 	CP	WORKSP+5 & 0FFH
 	JR	NZ,.L3
@@ -419,7 +421,7 @@ SCROD:	MACRO
 	CALL	DRAWPL
 	LD	A,L
 	CP	COLS*(ROWS-1) & 0FFH
-	CALL	Z,VROW1E	; call if (YCURR)=0
+	CALL	Z,VROW1		; call if (YCURR)=0
 	ENDM
 
 ; ---------------------------------
@@ -429,27 +431,22 @@ SCROD:	MACRO
 	ORG	4000H
 
 START:	PAINT
-	CALL	DRAWPL
 POLL:	CALL	CLRWS
 	LD	HL,PPI
-	DI
 	LD	(HL),SHBRK
 	INC	L		; (need a tiny delay before fetching the keys)
 	LD	BC,POLL
 	LD	A,(HL)		; BC-----S (binary): break, ctrl, shift
-	EI
 	LD	(FAST),A
 	AND	81H		; shift+break
 	JR	NZ,POLL1
 	UNDO
 	JP	EXIT
 POLL1:	DEC	L
-	DI
 	LD	(HL),ARROWS
 	INC	L		; (need a tiny delay before fetching the keys)
 	PUSH	BC		; push return address (main loop)
 	LD	A,(HL)		; --UDRL-- (binary): up, down, right, left
-	EI
 	OR	0C3H		; neutralize non-arrow keys
 	LD	C,A
 	CPL			; now 1 = pressed, 0 = released
