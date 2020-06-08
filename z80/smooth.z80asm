@@ -8,9 +8,14 @@
 ; ------------------------------------------------------------
 
 ; MZ-700 timing (according to service manual):
-; CPU clock 3.546875 MHz
-; VBLANK period: 19.985 - 12.8112 = 7.1738 ms = 25444 clock cycles
-; HBLANK period: 64.05603 - 36.088 = 27.96803 us = 99 clock cycles
+; CPU clock frequency: 3.546875 MHz
+; Full horizontal period: 64.05603 us = 227.20 clock cycles
+; - Raster scan period:   36.088   us = 128.00 clock cycles
+; - HBLANK period:        27.96803 us =  99.20 clock cycles
+; Any attempt to access video RAM during raster scan
+; will halt the CPU until the start of the next VBLANK period.
+; This goes for all 312 horizontal periods within each frame.
+; Even during VBLANK!!!
 
 ; MZ-700 memory map: video RAM (40x25 character matrix)
 VRAM:	EQU	0D000H	; start address (characters)
@@ -73,7 +78,7 @@ POSY:	EQU	2505
 ; ---------------------------------
 
 ; LDAIYL - workaround for unrecognized LD A,IYL
-; 2 bytes; 8 cycles
+; Size: 2 bytes
 
 LDAIYL:	MACRO
 	DEFB	0FDH	; prefix for IY
@@ -85,7 +90,7 @@ LDAIYL:	MACRO
 ; in/out: HL = seed
 ; out:    PO = wall, PE = no wall
 ; registers clobbered: AF, HL
-; 3 bytes; 19 cycles
+; Size: 3 bytes
 
 HASHI:	MACRO
 	LD	A,L
@@ -203,8 +208,12 @@ VCHAR:	MACRO
 ;         DE = comparison address (video RAM or workspace)
 ; in:     C  = new character code
 ;         B  = 20 for one row, 40 for two rows
-; registers clobbered: AF, B, DE, HL (makes B=0)
-; 24 bytes; 1695~2415 cycles for one row, 3395~4835 cycles for two rows
+; Registers clobbered: AF, B, DE, HL (makes B=0)
+; Size: 24 bytes
+; The 2 VCHAR together span max 96 cycles; these fit in a single HBLANK.
+; This means VROW takes max 20 horizontal periods per row of characters.
+; SCROD and SCROU only update 10 rows per frame,
+; so VROW will occupy max 200 horizontal periods per frame.
 
 VROW:	MACRO
 .LOOP:	VCHAR
@@ -213,7 +222,7 @@ VROW:	MACRO
 	VCHAR
 	INC	DE
 	INC	HL
-	DJNZ	.LOOP		; 85~121 cycles per iteration
+	DJNZ	.LOOP
 	ENDM
 
 ; REPLCD - replace character and color (D)
@@ -255,8 +264,12 @@ REPLCE:	MACRO
 ; in:     A  = old character code
 ;         C  = new character code
 ;         D  = new color code
-; registers clobbered: F, B, HL (B is made 0)
-; 24 bytes, 1222~2222 cycles
+; Registers clobbered: F, B, HL (B is made 0)
+; Size: 24 bytes
+; The 2 REPLCD together span max 92 cycles; these fit in a single HBLANK.
+; This means REROWD takes max 20 horizontal periods.
+; VPIX calls REROWD 5 times per frame, and REROWE too.
+; so VPIX will occupy max 200 horizontal periods per frame.
 
 REROWD:	MACRO
 	LD	B,COLS/2
@@ -272,8 +285,12 @@ REROWD:	MACRO
 ; in:     A  = old character code
 ;         C  = new character code
 ;         E  = new color code
-; registers clobbered: F, B, HL (B is made 0)
-; 24 bytes, 1222~2222 cycles
+; Registers clobbered: F, B, HL (B is made 0)
+; Size: 24 bytes
+; The 2 REPLCE together span max 92 cycles; these fit in a single HBLANK.
+; This means REROWE takes max 20 horizontal periods.
+; VPIX calls REROWE 5 times per frame, and REROWD too.
+; so VPIX will occupy max 200 horizontal periods per frame.
 
 REROWE:	MACRO
 	LD	B,COLS/2
@@ -287,6 +304,8 @@ REROWE:	MACRO
 ; SCROR - scroll maze to the right (player moving left)
 ; in: C = replacement character
 ; registers clobbered: AF, B, DE, HL, IY
+; Each pair of HDRAW together span max 99 cycles; these fit in a single HBLANK.
+; Iterated 200 times, they occupy 200 horizontal periods per frame.
 
 SCROR:	MACRO
 	LD	IY,WORKSP+5
@@ -308,7 +327,7 @@ SCROR:	MACRO
 	INC	HL
 	HCHAR
 	ADD	HL,DE
-	DJNZ	.L2		; loop: 68~118 cycles per iteration
+	DJNZ	.L2
 	LDAIYL
 	CP	WORKSP+ROWS+5 & 0FFH
 	JR	NZ,.L1
@@ -321,7 +340,7 @@ SCROR:	MACRO
 	ADD	HL,DE
 	HCHAR
 	INC	HL
-	DJNZ	.L4		; loop: 68~118 cycles per iteration
+	DJNZ	.L4
 	LDAIYL
 	CP	WORKSP+ROWS+5 & 0FFH
 	JR	NZ,.L3
@@ -330,14 +349,13 @@ SCROR:	MACRO
 
 ; SCROL - scroll maze to the left (player moving right)
 ; in: C = replacement character
-; registers clobbered: AF, B, DE, HL, IY
-; could take up to 25387 cycles into VBLANK to draw the entire frame
-; (but I see flicker on the real machine; undocumented wait states?)
+; Registers clobbered: AF, B, DE, HL, IY
+; Each pair of HDRAW together span max 99 cycles; these fit in a single HBLANK.
+; Iterated 200 times, they occupy 200 horizontal periods per frame.
 
 SCROL:	MACRO
-	LD	IY,WORKSP+ROWS+5
-	LD	DE,-4
-	LD	HL,VRAMC+COLS*ROWS
+	LD	IY,WORKSP+5
+	LD	HL,VRAMC+COLS
 	LD	A,MCOLOR
 	CALL	VBLANK
 	CALL	CLRPL
@@ -346,29 +364,35 @@ SCROL:	MACRO
 	JR	Z,.L3
 	NEG
 	ADD	A,L
-	LD	L,A		; HL=VRAMC+1000-(XCURR)
-.L1:	DEC	IY
-	LD	A,(IY+0)
+	LD	L,A		; HL=VRAMC+40-(XCURR)
+.L1:	LD	A,(IY+0)
+	INC	IY
+	LD	DE,-4
 	LD	B,8
 .L2:	HCHAR
 	DEC	HL
 	HCHAR
 	ADD	HL,DE
-	DJNZ	.L2		; loop: 68~118 cycles per iteration
+	DJNZ	.L2
+	LD	DE,2*COLS
+	ADD	HL,DE
 	LDAIYL
-	CP	WORKSP+5 & 0FFH
+	CP	WORKSP+ROWS+5 & 0FFH
 	JR	NZ,.L1
 	JR	.L5
-.L3:	DEC	IY
-	LD	A,(IY+0)
+.L3:	LD	A,(IY+0)
+	INC	IY
+	LD	DE,-4
 	LD	B,8
 .L4:	DEC	HL
 	HCHAR
 	ADD	HL,DE
 	HCHAR
-	DJNZ	.L4		; loop: 68~118 cycles per iteration
+	DJNZ	.L4
+	LD	DE,2*COLS
+	ADD	HL,DE
 	LDAIYL
-	CP	WORKSP+5 & 0FFH
+	CP	WORKSP+ROWS+5 & 0FFH
 	JR	NZ,.L3
 .L5:	CALL	DRAWPL
 	ENDM
