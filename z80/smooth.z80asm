@@ -225,6 +225,23 @@ VROW:	MACRO
 	DJNZ	.LOOP
 	ENDM
 
+; SKIP3 - skip 3 rows (typically following VROW)
+; in:     B  = 0
+; in/out: DE = video RAM address
+;         HL = another video RAM address
+; Registers clobbered: AF, DE, HL
+; Size: 8 bytes
+
+SKIP3:	MACRO
+	LD	A,C		; save C
+	LD	C,COLS*3	; BC=120 (demands B=0)
+	ADD	HL,BC
+	EX	DE,HL
+	ADD	HL,BC
+	EX	DE,HL
+	LD	C,A		; restore C
+	ENDM
+
 ; REPLCD - replace character and color (D)
 ; in: HL = video RAM address (characters)
 ;     A  = old character code
@@ -412,6 +429,7 @@ SCROD:	MACRO
 	CALL	VROW1E
 	LD	DE,VRAMC
 	LD	A,(YCURR)
+	LD	B,A		; B=0 (required at .L4)
 	OR	A
 	JR	Z,.L4
 	LD	B,COLS/2
@@ -429,23 +447,18 @@ SCROD:	MACRO
 	LD	L,A		; HL=VRAMC+COLS*((YCURR)-1)
 .L2:	LD	B,COLS
 .L3:	VROW
-.L4:	LD	A,C		; save C
-	LD	BC,3*COLS
-	ADD	HL,BC
-	EX	DE,HL
-	ADD	HL,BC
-	EX	DE,HL
-	LD	C,A		; restore C
-	LD	A,E
-	RLA
+.L4:	SKIP3
 	LD	A,D
-	RLA
-	CP	0B7H		; while DE<VRAMC+896
+	CP	3+(VRAMC>>8)	; while DE<VRAMC+768
 	JR	C,.L2
 	CALL	DRAWPL
-	LD	A,L
-	CP	COLS*(ROWS-1) & 0FFH
-	CALL	Z,VROW1		; call if (YCURR)=0
+	LD	B,COLS
+	LD	A,E		; DE=VRAMC+920/960/800/840/880
+	RLCA
+	JR	NC,.L5		; skip if DE<VRAMC+896 i.e. (YCURR)=2/3/4
+	LD	B,COLS/2
+	RLCA
+.L5:	CALL	NC,VROW2	; skip if (YCURR)=1
 	ENDM
 
 ; ---------------------------------
@@ -736,34 +749,26 @@ SCROU:	LD	DE,VRAMC+COLS
 	LD	L,A		; HL=VRAMC+COLS*(YCURR)-COLS
 SCROU1:	LD	B,COLS
 SCROU2:	VROW
-	LD	A,C		; save C
-	LD	C,COLS*3	; BC=120 (B is already zero)
-	ADD	HL,BC
-	EX	DE,HL
-	ADD	HL,BC
-	EX	DE,HL
-	LD	C,A		; restore C
-	LD	A,L
-	RLA
+	SKIP3
 	LD	A,H
-	RLA
-	CP	0B7H		; while HL<VRAMC+896
+	CP	3+(VRAMC>>8)	; while HL<VRAMC+768
 	JR	C,SCROU1
 	CALL	DRAWPL
-	LD	A,L		; HL=VRAMC+960/1000/1040/1080/920
-	ADD	A,19H		; A=D9h/01h/29h/51h/B1h for (YCURR)=0/1/2/3/4
+	LD	B,COLS
+	LD	A,L		; HL=VRAMC+960/800/840/880/920
 	RLCA
-	RET	NC		; return if (YCURR)=1/2/3
+	JR	NC,VROW2	; skip if HL<VRAMC+896 i.e. (YCURR)=1/2/3
 	RLCA
-	CALL	NC,VROW1	; call if (YCURR)=4
+	CALL	NC,VROW1	; call if (YCURR)=4, skip if (YCURR)=0
 	; fall through to VROW1E
 
 ; VROW1E - vertically scroll a single row at edge
 ; VROW1  - vertically scroll a single row
+; VROW2  - vertically scroll two rows (requires B=COLS)
 
 VROW1E:	LD	DE,WORKSP+5
 VROW1:	LD	B,COLS/2
-	VROW
+VROW2:	VROW
 	RET
 
 ; CLRWS - clear workspace
