@@ -9,9 +9,9 @@
 
 ; MZ-700 timing (according to service manual):
 ; CPU clock frequency: 3.546875 MHz
-; Full horizontal period: 64.05603 us = 227.20 clock cycles
-; - Raster scan period:   36.088   us = 128.00 clock cycles
-; - HBLANK period:        27.96803 us =  99.20 clock cycles
+; Horizontal period: 64.05603 us = 227.20 clock cycles
+; - Raster scan:     36.088   us = 128.00 clock cycles
+; - HBLANK:          27.96803 us =  99.20 clock cycles
 ; Any attempt to access video RAM during raster scan
 ; will halt the CPU until the start of the next VBLANK period.
 ; This goes for all 312 horizontal periods within each frame.
@@ -136,16 +136,24 @@ PAINT:	MACRO
 	LD	A,E
 	OR	A
 	JR	NZ,.OUTER
+	LD	A,PCOLOR
 	LD	HL,VRAM+499
 	LD	(HL),PL1
 	INC	L
 	LD	(HL),PL2
+	SET	3,H
+	LD	(HL),A
+	DEC	L
+	LD	(HL),A
 	LD	HL,VRAM+539
 	LD	(HL),PL3
 	INC	L
 	LD	(HL),PL4
+	SET	3,H
+	LD	(HL),A
+	DEC	L
+	LD	(HL),A
 	LD	IX,VRAMC+458	; center of screen
-	CALL	DRAWPL
 	ENDM
 
 ; UNDO - restore original video RAM contents, row by row (from the top down)
@@ -176,12 +184,13 @@ UNDO:	MACRO
 ;         C  = new character code
 ; in/out: A  = neighboring old color code
 ; registers clobbered: AF
-; 9 bytes; 19 or 44 cycles
+; 11 bytes; 33 or 51 cycles
 
 HCHAR:	MACRO
-	CP	(HL)
-	JR	Z,.SKIP
+	XOR	(HL)
+	AND	4
 	LD	A,(HL)
+	JR	Z,.SKIP
 	RES	3,H
 	LD	(HL),C
 	SET	3,H
@@ -192,11 +201,12 @@ HCHAR:	MACRO
 ;     DE = comparison address (video RAM or workspace)
 ;     C  = new character code
 ; registers clobbered: AF
-; 9 bytes; 26 or 44 cycles
+; 11 bytes; 33 or 51 cycles
 
 VCHAR:	MACRO
 	LD	A,(DE)
-	CP	(HL)
+	XOR	(HL)
+	AND	4
 	JR	Z,.SKIP
 	RES	3,H
 	LD	(HL),C
@@ -210,10 +220,12 @@ VCHAR:	MACRO
 ;         B  = 20 for one row, 40 for two rows
 ; Registers clobbered: AF, B, DE, HL (makes B=0)
 ; Size: 24 bytes
-; The 2 VCHAR together span max 96 cycles; these fit in a single HBLANK.
+; Video RAM access in the two VCHAR together spans max 98 cycles;
+; should fit in a single HBLANK.
 ; This means VROW takes max 20 horizontal periods per row of characters.
 ; SCROD and SCROU only update 10 rows per frame,
 ; so VROW will occupy max 200 horizontal periods per frame.
+; UPDATE: in reality it takes longer. Needs investigation!
 
 VROW:	MACRO
 .LOOP:	VCHAR
@@ -283,10 +295,11 @@ REPLCE:	MACRO
 ;         D  = new color code
 ; Registers clobbered: F, B, HL (B is made 0)
 ; Size: 24 bytes
-; The 2 REPLCD together span max 92 cycles; these fit in a single HBLANK.
+; The 2 REPLCD together span max 92 cycles; should fit in a single HBLANK.
 ; This means REROWD takes max 20 horizontal periods.
 ; VPIX calls REROWD 5 times per frame, and REROWE too.
 ; so VPIX will occupy max 200 horizontal periods per frame.
+; UPDATE: in reality it takes longer. Needs investigation!
 
 REROWD:	MACRO
 	LD	B,COLS/2
@@ -308,6 +321,7 @@ REROWD:	MACRO
 ; This means REROWE takes max 20 horizontal periods.
 ; VPIX calls REROWE 5 times per frame, and REROWD too.
 ; so VPIX will occupy max 200 horizontal periods per frame.
+; UPDATE: in reality it takes longer. Needs investigation!
 
 REROWE:	MACRO
 	LD	B,COLS/2
@@ -321,8 +335,10 @@ REROWE:	MACRO
 ; SCROR - scroll maze to the right (player moving left)
 ; in: C = replacement character
 ; registers clobbered: AF, B, DE, HL, IY
-; Each pair of HDRAW together span max 99 cycles; these fit in a single HBLANK.
+; Video RAM access in the two HCHAR together spans max 102 cycles;
+; might just fit in a single HBLANK.
 ; Iterated 200 times, they occupy 200 horizontal periods per frame.
+; UPDATE: in reality it takes longer. Needs investigation!
 
 SCROR:	MACRO
 	LD	IY,WORKSP+5
@@ -330,7 +346,6 @@ SCROR:	MACRO
 	LD	HL,VRAMC
 	LD	A,MCOLOR
 	CALL	VBLANK
-	CALL	CLRPL
 	LD	A,(XCURR)
 	OR	A		; if (XCURR)=0
 	JR	Z,.L3
@@ -351,7 +366,6 @@ SCROR:	MACRO
 	JR	.L5
 .L3:	LD	A,(IY+0)
 	INC	IY
-	LD	DE,4
 	LD	B,8
 .L4:	HCHAR
 	ADD	HL,DE
@@ -361,21 +375,22 @@ SCROR:	MACRO
 	LDAIYL
 	CP	WORKSP+ROWS+5 & 0FFH
 	JR	NZ,.L3
-.L5:	CALL	DRAWPL
-	ENDM
+.L5:	ENDM
 
 ; SCROL - scroll maze to the left (player moving right)
 ; in: C = replacement character
 ; Registers clobbered: AF, B, DE, HL, IY
-; Each pair of HDRAW together span max 99 cycles; these fit in a single HBLANK.
+; Video RAM access in the two HCHAR together spans max 102 cycles;
+; might just fit in a single HBLANK.
 ; Iterated 200 times, they occupy 200 horizontal periods per frame.
+; UPDATE: in reality it takes longer. Needs investigation!
 
 SCROL:	MACRO
 	LD	IY,WORKSP+5
+	LD	DE,-4
 	LD	HL,VRAMC+COLS
 	LD	A,MCOLOR
 	CALL	VBLANK
-	CALL	CLRPL
 	LD	A,(XCURR)
 	OR	A		; if (XCURR)=0
 	JR	Z,.L3
@@ -384,15 +399,16 @@ SCROL:	MACRO
 	LD	L,A		; HL=VRAMC+40-(XCURR)
 .L1:	LD	A,(IY+0)
 	INC	IY
-	LD	DE,-4
 	LD	B,8
 .L2:	HCHAR
 	DEC	HL
 	HCHAR
 	ADD	HL,DE
 	DJNZ	.L2
-	LD	DE,2*COLS
-	ADD	HL,DE
+	LD	A,C		; save C
+	LD	C,2*COLS	; BC=80 (B was already zero)
+	ADD	HL,BC
+	LD	C,A		; restore C
 	LDAIYL
 	CP	WORKSP+ROWS+5 & 0FFH
 	JR	NZ,.L1
@@ -406,13 +422,14 @@ SCROL:	MACRO
 	ADD	HL,DE
 	HCHAR
 	DJNZ	.L4
-	LD	DE,2*COLS
-	ADD	HL,DE
+	LD	A,C		; save C
+	LD	C,2*COLS	; BC=80 (B was already zero)
+	ADD	HL,BC
+	LD	C,A		; restore C
 	LDAIYL
 	CP	WORKSP+ROWS+5 & 0FFH
 	JR	NZ,.L3
-.L5:	CALL	DRAWPL
-	ENDM
+.L5:	ENDM
 
 ; SCROD - scroll maze down (player moving up)
 ; in: C = replacement character	(UPPER2 or UPPER4)
@@ -422,7 +439,6 @@ SCROD:	MACRO
 	LD	HL,VRAMC
 	LD	A,MCOLOR
 	CALL	VBLANK
-	CALL	CLRPL
 	LD	A,(YCURR)
 	SUB	2
 	JR	NC,.L1
@@ -451,7 +467,6 @@ SCROD:	MACRO
 	LD	A,D
 	CP	3+(VRAMC>>8)	; while DE<VRAMC+768
 	JR	C,.L2
-	CALL	DRAWPL
 	LD	B,COLS
 	LD	A,E		; DE=VRAMC+920/960/800/840/880
 	RLCA
@@ -732,7 +747,6 @@ SCROU:	LD	DE,VRAMC+COLS
 	LD	A,MCOLOR
 	LD	B,COLS/2
 	CALL	VBLANK
-	CALL	CLRPL
 	LD	A,(YCURR)
 	LD	L,A
 	OR	A		; if (YCURR)=0
@@ -753,7 +767,6 @@ SCROU2:	VROW
 	LD	A,H
 	CP	3+(VRAMC>>8)	; while HL<VRAMC+768
 	JR	C,SCROU1
-	CALL	DRAWPL
 	LD	B,COLS
 	LD	A,L		; HL=VRAMC+960/800/840/880/920
 	RLCA
@@ -937,16 +950,6 @@ CROSS2:	LD	A,E
 	CP	WORKSP+10 & 0FFH
 	JR	NC,CROSS1
 	POP	DE
-	RET
-
-; DRAWPL - draw player
-; CLRPL - clear player
-
-DRAWPL:	LD	A,PCOLOR
-CLRPL:	LD	(IX+41),A
-	LD	(IX+42),A
-	LD	(IX+81),A
-	LD	(IX+82),A
 	RET
 
 ; SPEED - set speed

@@ -1,4 +1,5 @@
 *.bin
 *.lbl
+*.lst
 *.raw
 bytes.tmp
