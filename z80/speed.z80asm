@@ -1,0 +1,132 @@
+; Test results of this program on a real Sharp MZ-700
+;
+; Number of green scan lines per character at top left of screen:
+;
+;             _ABCDEFGHIJKLMNOPQRS...
+; 79 cycles:  88887766554433221100  (all pairs: perfect fit)
+; 80 cycles:  88877665544322110000
+; 80 cycles:  88776655443221100000
+; 81 cycles:  88765432100000000000  (all singles: no fit)
+;
+; You see two results for 80 cycles, as it was continuously alternating.
+; Probably because total vertical period is not an integer number of
+; clock cycles: 312 * 227.2 = 70886.4
+;
+; Disclaimer: all results are estimations, as my monitor was fuzzy.
+; 80 cycles was particularly hard, due to the alternating effect.
+;
+; CONCLUSIONS
+;
+; Q: How many instructions fit in HBLANK?
+; A: A sequence of instructions writing to video RAM fit in the same HBLANK:
+;    - for sure if WAIT sample points are 79 or less clock cycles apart
+;    - 4 out of 5 times if WAIT sample points are 80 clock cycles apart
+;    - never if WAIT sample points are 81 or more clock cycles apart
+;
+; Q: How long does that make HBLANK?
+; A: Probably 80.6 <= HBLANK < 80.8 clock cycles (22.7242-22.7806 us).
+;    (Cannot get more accurate than this by means of software.)
+;    So yeah, this is a lot less than the 99.2 clock cycles suggested
+;    by the service manual.
+;
+; Q: Are there any wait states when accessing video RAM during HBLANK?
+; A: No.
+;    I took the opportunity to measure monitor ROM wait states:
+;    - Read from monitor ROM: 1 wait state (was already known)
+;    - Write to monitor ROM: no wait state (good to know for emulators)
+;
+; Q: How many HBLANKS are there between start of VBLANK and first scan line?
+; A: 113, so apparently VBLANK begins with an HBLANK.
+;    Disclaimer: I do not know how much time you have in that initial HBLANK.
+
+VRAM:	EQU	0D000H
+VRAMC:	EQU	0D800H
+PPI2:	EQU	0E002H
+MEM:	EQU	1300H	; or 0D000H or 0000H
+
+	ORG	1200H
+
+START:	LD	DE,VRAM
+CHARS:	LD	A,E
+	AND	1FH
+	LD	(DE),A
+	INC	E
+	JP	P,CHARS
+
+LOOP:	LD	DE,VRAMC
+	LD	A,71H	; white on blue
+CLEAR:	LD	(DE),A
+	INC	E
+	JP	P,CLEAR
+
+	LD	E,110	; skip 111 scan lines (a full VBLANK is 112)
+
+	; The following pair of loops will bring us
+	; to the start of the VBLANK period
+
+	LD	HL,PPI2
+	LD	A,7FH	; wait while 0 (until 1)
+WAIT1:	OR	(HL)
+	JP	PO,WAIT1
+	LD	A,80H	; wait while 1 (until 0)
+WAIT2:	AND	(HL)
+	JP	PO,WAIT2
+
+	; The following loop will bring us to a point
+	; shortly before the end of the VBLANK period.
+	; It tries to write to V-RAM every 112 clock cycles;
+	; long enough to skip a full HBLANK,
+	; short enough not to skip a scan line.
+	; So I'm pretty sure every write will have to wait until the
+	; start of the next HBLANK period, meaning the number of
+	; HBLANKs skipped equals the number of loop iterations.
+
+FFW1:	LD	(DE),A	; 7 - a new HBLANK starts here
+	LD	B,6	; 7
+FFW2:	DJNZ	FFW2	; 6*13-5
+	NOP		; 4
+	LD	A,3	; 7 - black on purple
+	DEC	E	; 4
+	JP	NZ,FFW1	; 10
+
+	; The following loop writes to V-RAM with pauses of 110 and 80 cycles.
+	; If you see each character cut off 1 scanline lower than the previous,
+	; then HBLANK < 80.0 ----> try 79: replace a RET C (D8h) with NOP (00h)
+	; If you see every pair of characters cut off at the same height,
+	; then HBLANK >= 80.8 ---> try 81: replace a NOP (00h) with RET C (D8h)
+	; If singles and pairs alternate, then 80.0 <= HBLANK < 80.8
+	; - 4 singles followed by 1 pair:  80.0-80.2
+	; - 3 singles followed by 2 pairs: 80.2-80.4
+	; - 2 singles followed by 3 pairs: 80.4-80.6
+	; - 1 single  followed by 4 pairs: 80.6-80.8
+
+	LD	(DE),A	; a new HBLANK starts here
+	NOP
+	NOP
+	NOP
+	NOP
+
+TEST:	LD	B,6	; 7
+TEST1:	DJNZ	TEST1	; 6*13-5
+	LD	A,4	; 7 - black on green
+	LD	(DE),A	; a new HBLANK starts here
+	INC	E	; 4
+	LD	HL,MEM	; 10
+	LD	C,(HL)	; 7 - for testing read wait states
+	LD	HL,MEM	; 10
+	LD	(HL),C	; 7 - for testing write wait states
+	NOP		; 4
+	NOP		; 4
+	NOP		; 4
+	NOP		; 4
+	NOP		; 4 - change this to RET C to test 81 cycles
+	RET	C	; 5 - change this to NOP to test 79 cycles
+	RET	C	; 5
+	RET	C	; 5
+	LD	(DE),A	; 7
+	INC	E
+	JP	P,TEST	; 128 character positions
+
+	JR	LOOP
+
+	END
