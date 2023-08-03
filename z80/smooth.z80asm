@@ -13,7 +13,7 @@
 ; - Raster scan:     36.088   us = 128.00 clock cycles
 ; - HBLANK:          27.96803 us =  99.20 clock cycles
 ; Any attempt to access video RAM during raster scan
-; will halt the CPU until the start of the next VBLANK period.
+; will halt the CPU until the start of the next HBLANK period.
 ; This goes for all 312 horizontal periods within each frame.
 ; Even during VBLANK!!!
 

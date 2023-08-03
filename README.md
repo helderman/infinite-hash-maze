@@ -66,20 +66,27 @@ Note: zoom out too far and your web browser may break under the strain.
 
 To demonstrate just how simple and cheap the algorithm really is,
 I implemented the maze in Z80 assembly.
-The resulting program needs less than 1 KB of memory (code + data + stack).
+The resulting binary is just 149 bytes.
+The program stores its state in registers, not in RAM.
+It does not even use the stack.
+(Of course, it does write to video RAM, to display the maze.)
 
-It runs on a
+The program runs on a
 [Sharp MZ-700](https://commons.wikimedia.org/wiki/File:Sharp_MZ-700.jpg)
 at a reasonable frame rate. Just feed
-[mazegame.wav](https://helderman.github.io/infinite-hash-maze/z80/mazegame.wav)
-or
 [mazeview.wav](https://helderman.github.io/infinite-hash-maze/z80/mazeview.wav)
 into the computer's tape interface.
 
 It is unlikely you will own the real machine,
 so instead please drag and drop
-[mazegame.mzt](https://helderman.github.io/infinite-hash-maze/z80/mazegame.mzt)
-or
 [mazeview.mzt](https://helderman.github.io/infinite-hash-maze/z80/mazeview.mzt)
 onto this emulator:   
 [https://takamin.github.io/mz700-js/emu.html](https://takamin.github.io/mz700-js/emu.html)
+
+On the real machine, find your way in this 50 fps smooth-scrolling implementation:
+[smooth.wav](https://helderman.github.io/infinite-hash-maze/z80/smooth.wav)
+
+The smooth-scrolling implementation uses HBLANK synchronization,
+something not supported by most emulators, causing the program to freeze.
+Try this instead:
+[mazegame.mzt](https://helderman.github.io/infinite-hash-maze/z80/mazegame.mzt)
